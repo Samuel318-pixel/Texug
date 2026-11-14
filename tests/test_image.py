@@ -4,7 +4,7 @@ import unittest
 
 IMAGE_PATH = pathlib.Path("build/texugos.img")
 SECTOR_SIZE = 512
-BOOT_PAYLOAD_SECTORS = 104
+BOOT_PAYLOAD_SECTORS = 120
 
 
 class BootImageTests(unittest.TestCase):

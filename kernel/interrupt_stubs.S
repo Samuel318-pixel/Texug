@@ -2,6 +2,20 @@
 .code32
 .extern interrupt_dispatch
 
+.global load_gdt
+load_gdt:
+    movl 4(%esp), %eax
+    lgdt (%eax)
+    ljmp $0x08, $1f
+1:
+    movw $0x10, %ax
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %ss
+    movw %ax, %fs
+    movw %ax, %gs
+    ret
+
 .macro ISR_NOERR number
 .global isr\number
 isr\number:
@@ -74,6 +88,12 @@ IRQ_STUB 12
 IRQ_STUB 13
 IRQ_STUB 14
 IRQ_STUB 15
+
+.global user_syscall_stub
+user_syscall_stub:
+    pushl $0
+    pushl $128
+    jmp interrupt_common
 
 interrupt_common:
     cld

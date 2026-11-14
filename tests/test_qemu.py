@@ -328,6 +328,10 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
         self.assertIn("PIC: remapped; PIT: 100 Hz", self.screen)
         self.assertIn("Threads: 2 preemptive tasks completed", self.screen)
+        self.assertIn(
+            "User mode: syscall and kernel-page isolation tests passed",
+            self.screen,
+        )
         self.assertIn("Kernel subsystems active (partial).", self.screen)
         self.assertIn("TexugOS shell ready.", self.screen)
         self.assertRegex(self.screen, r"PIT ticks: [1-9][0-9]*")

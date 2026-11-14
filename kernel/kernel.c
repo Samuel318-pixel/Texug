@@ -15,6 +15,7 @@
 #include "mouse.h"
 #include "pci.h"
 #include "network.h"
+#include "user_mode.h"
 
 #define E820_BUFFER ((volatile const struct e820_entry *)0x5000u)
 #define E820_MAX_ENTRIES 32u
@@ -306,6 +307,11 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     console_write("Threads: ");
     console_write_u32(completed_threads);
     console_write(" preemptive tasks completed\n");
+    if (!user_mode_self_test()) {
+        console_write("User-mode ring 3 self-test failed.\n");
+        halt_forever();
+    }
+    console_write("User mode: syscall and kernel-page isolation tests passed\n");
     console_write("Kernel subsystems active (partial).\n");
     shell_run();
 }

@@ -104,6 +104,10 @@ class QemuIsoBootTests(unittest.TestCase):
 
                 self.assertIn("TexugOS shell ready.", screen)
                 self.assertIn("FAT32: mount, CRUD and LFN test passed", screen)
+                self.assertIn(
+                    "User mode: syscall and kernel-page isolation tests passed",
+                    screen,
+                )
             finally:
                 if connection is not None:
                     connection.close()

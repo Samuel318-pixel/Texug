@@ -92,11 +92,15 @@ $(BUILD)/arena.o: games/arena.c | $(BUILD)
 $(BUILD)/interrupt_stubs.o: kernel/interrupt_stubs.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
+$(BUILD)/user_mode_asm.o: kernel/user_mode.S | $(BUILD)
+	$(AS) $(ASFLAGS) -o $@ $<
+
 $(BUILD)/context_switch.o: kernel/context_switch.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
 $(BUILD)/payload.elf: $(BUILD)/stage2.o $(BUILD)/interrupt_stubs.o \
-		$(BUILD)/context_switch.o $(BUILD)/kernel.o $(BUILD)/console.o \
+		$(BUILD)/context_switch.o $(BUILD)/user_mode_asm.o \
+		$(BUILD)/kernel.o $(BUILD)/console.o $(BUILD)/user_mode.o \
 		$(BUILD)/interrupts.o $(BUILD)/threads.o $(BUILD)/paging.o \
 		$(BUILD)/frame_allocator.o $(BUILD)/heap.o \
 		$(BUILD)/pic.o $(BUILD)/pit.o $(BUILD)/keyboard.o $(BUILD)/mouse.o \

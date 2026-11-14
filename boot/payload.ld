@@ -13,7 +13,7 @@ SECTIONS
     . = 0x10000;
     .boot16 : { KEEP(*(.boot16)) } :boot
     .text : { *(.text*) } :boot
-    .rodata : { *(.rodata*) } :boot
+    .rodata : { *(.rodata*) *(.userimage) } :boot
     .data : { *(.data*) } :writable
     .bss :
     {

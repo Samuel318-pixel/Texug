@@ -6,7 +6,7 @@ input, and a basic graphical desktop.
 
 ## Current implementation (partial)
 
-The boot image contains a 512-byte boot sector followed by a fixed 104-sector
+The boot image contains a 512-byte boot sector followed by a fixed 120-sector
 payload and a FAT32 partition. The boot sector uses BIOS LBA extensions when
 available and falls back to BIOS CHS reads when needed, loads the payload at
 physical address `0x10000`, and transfers control to it. The payload collects
@@ -85,20 +85,23 @@ are claimed or included.
   A BIOS El Torito ISO target is available. HTTPS is not supported. The
   desktop also has a native, two-level raycasting game with movement, mouse
   aiming, shooting, health, ammo, enemies, and wall collision.
+  A boot-time ring 3 self-test exercises a DPL 3 `int 0x80` gate and confirms
+  that user code cannot read a supervisor-only kernel page. User code and its
+  stack use separate pages; this is a test harness, not a process runtime.
 - Partial: DNS currently resolves IPv4 A records only. The game has two
   compact arena layouts; QEMU tests combat in the first and progression to
   the second. Enemies pursue the player, and the PC speaker provides firing,
   hit, damage, and reload tones; audible output is unverified. Stage 6 device
   support and all networking have only been exercised with QEMU-emulated
   hardware.
-  Desktop apps and the game run inside the kernel; user-mode application
-  processes and isolation are not implemented. Networking has no TLS/HTTPS,
+  Desktop apps and the game run inside the kernel; there is no user-mode
+  process manager or application ABI. Networking has no TLS/HTTPS,
   JavaScript, or general-purpose TCP sockets and has only been tested with
   QEMU user-mode networking.
 - Partial: FAT32 long filenames support ASCII names up to 255 characters with
   generated 8.3 aliases; Unicode names are not supported.
 - Not yet implemented: AHCI/SATA hardware verification, a full-featured
-  browser, or user-mode applications.
+  browser, or user-mode application processes.
 - The QEMU smoke test confirms boot in emulation; physical hardware has not
   been tested.
 - The ISO boots through BIOS El Torito hard-disk emulation; the kernel's ATA
