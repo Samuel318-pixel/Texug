@@ -1,0 +1,129 @@
+import json
+import pathlib
+import shutil
+import signal
+import socket
+import subprocess
+import tempfile
+import time
+import unittest
+
+IMAGE_PATH = pathlib.Path("build/texugos.img").resolve()
+VGA_BYTES = 80 * 25 * 2
+
+
+@unittest.skipUnless(shutil.which("qemu-system-i386"), "QEMU is not installed")
+class QemuBootTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tempdir = tempfile.TemporaryDirectory(prefix="texugos-qemu-")
+        cls.qmp_path = pathlib.Path(cls.tempdir.name) / "qmp.sock"
+        cls.vga_path = pathlib.Path(cls.tempdir.name) / "vga.bin"
+        cls.process = subprocess.Popen(
+            [
+                "qemu-system-i386",
+                "-display",
+                "none",
+                "-no-reboot",
+                "-no-shutdown",
+                "-drive",
+                f"file={IMAGE_PATH},format=raw,if=ide",
+                "-boot",
+                "c",
+                "-qmp",
+                f"unix:{cls.qmp_path},server=on,wait=off",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        try:
+            cls._connect_qmp()
+            cls._execute_qmp({"execute": "qmp_capabilities"})
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                cls._execute_qmp(
+                    {
+                        "execute": "human-monitor-command",
+                        "arguments": {
+                            "command-line": (
+                                f'pmemsave 0xb8000 0x{VGA_BYTES:x} "{cls.vga_path}"'
+                            )
+                        },
+                    }
+                )
+                if cls.vga_path.exists() and cls.vga_path.stat().st_size == VGA_BYTES:
+                    memory = cls.vga_path.read_bytes()
+                    cls.screen = "".join(
+                        chr(memory[index]) for index in range(0, len(memory), 2)
+                    )
+                    if "Kernel stage 3 active." in cls.screen:
+                        break
+                time.sleep(0.1)
+            else:
+                raise TimeoutError("TexugOS did not finish booting in QEMU")
+        except Exception:
+            cls._stop_qemu()
+            cls.tempdir.cleanup()
+            raise
+
+    @classmethod
+    def _connect_qmp(cls):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if cls.process.poll() is not None:
+                raise RuntimeError("QEMU exited before the QMP socket became ready")
+            try:
+                cls.qmp_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                cls.qmp_socket.settimeout(2)
+                cls.qmp_socket.connect(str(cls.qmp_path))
+                cls.qmp_file = cls.qmp_socket.makefile("rwb", buffering=0)
+                json.loads(cls.qmp_file.readline())
+                return
+            except (FileNotFoundError, ConnectionRefusedError):
+                cls.qmp_socket.close()
+                time.sleep(0.05)
+        raise TimeoutError("QEMU QMP socket did not become ready")
+
+    @classmethod
+    def _execute_qmp(cls, command):
+        cls.qmp_file.write((json.dumps(command) + "\n").encode())
+        while True:
+            response = json.loads(cls.qmp_file.readline())
+            if "return" in response:
+                return response["return"]
+            if "error" in response:
+                raise RuntimeError(response["error"])
+
+    @classmethod
+    def _stop_qemu(cls):
+        if hasattr(cls, "qmp_file"):
+            cls.qmp_file.close()
+        if hasattr(cls, "qmp_socket"):
+            cls.qmp_socket.close()
+        if cls.process.poll() is None:
+            cls.process.send_signal(signal.SIGTERM)
+            try:
+                cls.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                cls.process.kill()
+                cls.process.wait(timeout=5)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._stop_qemu()
+        cls.tempdir.cleanup()
+
+    def test_kernel_reports_working_memory_and_interrupt_setup(self):
+        self.assertIn("Usable RAM:", self.screen)
+        self.assertIn("Paging: 16 MiB identity map active", self.screen)
+        self.assertIn("Memory: frame allocator and kernel heap active", self.screen)
+        self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
+        self.assertIn("PIC: remapped; PIT: 100 Hz", self.screen)
+        self.assertIn("Threads: 2 cooperative tasks completed", self.screen)
+        self.assertIn("Kernel stage 3 active.", self.screen)
+        self.assertRegex(self.screen, r"PIT ticks: [1-9][0-9]*")
+
+
+if __name__ == "__main__":
+    unittest.main()
