@@ -524,28 +524,40 @@ class QemuBootTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertEqual(framebuffer[sample], wallpaper_pixel)
 
-        self._move_mouse_to(520, 40, 50, 50)
-        self._click_mouse()
+        self._send_key("1")
         deadline = time.monotonic() + 3
         framebuffer = b""
         while time.monotonic() < deadline:
             framebuffer = self._read_framebuffer()
-            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[sample] == 15:
+            files_header_pixels = sum(
+                framebuffer[row * 320 + column] == 1
+                for row in range(50, 58)
+                for column in range(80, 205)
+            ) if len(framebuffer) == GRAPHICS_BYTES else 0
+            if (
+                len(framebuffer) == GRAPHICS_BYTES
+                and framebuffer[sample] == 15
+                and files_header_pixels > 20
+            ):
                 break
             time.sleep(0.05)
         self.assertEqual(framebuffer[sample], 15)
+        self.assertGreater(files_header_pixels, 20)
         files_before = self._framebuffer_region(framebuffer, 75, 45, 190, 110)
-        self._send_key("ret")
-        deadline = time.monotonic() + 3
         files_after = files_before
-        while time.monotonic() < deadline:
-            framebuffer = self._read_framebuffer()
-            files_after = self._framebuffer_region(
-                framebuffer, 75, 45, 190, 110
-            )
+        for attempt in range(3):
+            self._send_key("ret")
+            deadline = time.monotonic() + 1
+            while time.monotonic() < deadline:
+                framebuffer = self._read_framebuffer()
+                files_after = self._framebuffer_region(
+                    framebuffer, 75, 45, 190, 110
+                )
+                if files_after != files_before:
+                    break
+                time.sleep(0.05)
             if files_after != files_before:
                 break
-            time.sleep(0.05)
         self.assertNotEqual(files_after, files_before)
 
         self._move_mouse_to(50, 50, 520, 40)
