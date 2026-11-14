@@ -76,7 +76,8 @@ are claimed or included.
   collision.
 - Partial: DNS currently resolves IPv4 A records only. The game has two
   compact arena layouts; QEMU tests combat in the first and progression to
-  the second. Enemies pursue the player but there is no sound. Stage 6 device
+  the second. Enemies pursue the player, and the PC speaker provides firing,
+  hit, damage, and reload tones; audible output is unverified. Stage 6 device
   support and all networking have only been exercised with QEMU-emulated
   hardware.
   Desktop apps and the game run inside the kernel; user-mode application

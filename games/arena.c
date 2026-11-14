@@ -267,6 +267,7 @@ static void update_enemies(void)
             player_health = player_health > 10u
                                 ? (uint8_t)(player_health - 10u)
                                 : 0u;
+            pit_beep(196u, 5u);
             if (player_health == 0u) {
                 state = ARENA_LOST;
                 return;
@@ -287,9 +288,11 @@ void arena_fire(void)
         last_action[3] = 'T';
         last_action[4] = 'Y';
         last_action[5] = '\0';
+        pit_beep(220u, 3u);
         return;
     }
     --player_ammo;
+    pit_beep(880u, 2u);
     for (uint32_t step = 1u; step <= MAX_RAY_STEPS; ++step) {
         int32_t hit_x = player_x +
                         direction_x(player_direction) * (int32_t)step;
@@ -311,6 +314,7 @@ void arena_fire(void)
                     state = ARENA_WON;
                 }
             }
+            pit_beep(1320u, 3u);
             last_action[0] = 'H';
             last_action[1] = 'I';
             last_action[2] = 'T';
@@ -363,6 +367,7 @@ void arena_handle_key(char key)
         arena_fire();
     } else if (key == 'r' || key == 'R') {
         player_ammo = 12u;
+        pit_beep(660u, 3u);
     }
 }
 
