@@ -75,7 +75,7 @@ boot_drive:
 
 disk_packet:
     .byte 0x10, 0x00
-    .word 32
+    .word 48
     .word 0x0000
     .word 0x1000
     .quad 1

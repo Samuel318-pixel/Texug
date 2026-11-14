@@ -17,6 +17,8 @@ class QemuBootTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tempdir = tempfile.TemporaryDirectory(prefix="texugos-qemu-")
+        cls.qemu_image = pathlib.Path(cls.tempdir.name) / "texugos.img"
+        shutil.copyfile(IMAGE_PATH, cls.qemu_image)
         cls.qmp_path = pathlib.Path(cls.tempdir.name) / "qmp.sock"
         cls.vga_path = pathlib.Path(cls.tempdir.name) / "vga.bin"
         cls.process = subprocess.Popen(
@@ -27,7 +29,7 @@ class QemuBootTests(unittest.TestCase):
                 "-no-reboot",
                 "-no-shutdown",
                 "-drive",
-                f"file={IMAGE_PATH},format=raw,if=ide",
+                f"file={cls.qemu_image},format=raw,if=ide",
                 "-boot",
                 "c",
                 "-qmp",
@@ -43,23 +45,9 @@ class QemuBootTests(unittest.TestCase):
             cls.screen = ""
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
-                cls._execute_qmp(
-                    {
-                        "execute": "human-monitor-command",
-                        "arguments": {
-                            "command-line": (
-                                f'pmemsave 0xb8000 0x{VGA_BYTES:x} "{cls.vga_path}"'
-                            )
-                        },
-                    }
-                )
-                if cls.vga_path.exists() and cls.vga_path.stat().st_size == VGA_BYTES:
-                    memory = cls.vga_path.read_bytes()
-                    cls.screen = "".join(
-                        chr(memory[index]) for index in range(0, len(memory), 2)
-                    )
-                    if "Kernel stage 3 active." in cls.screen:
-                        break
+                cls.screen = cls._read_screen()
+                if "TexugOS shell ready." in cls.screen:
+                    break
                 time.sleep(0.1)
             else:
                 visible = "\n".join(
@@ -107,6 +95,55 @@ class QemuBootTests(unittest.TestCase):
                 raise RuntimeError(response["error"])
 
     @classmethod
+    def _read_screen(cls):
+        cls._execute_qmp(
+            {
+                "execute": "human-monitor-command",
+                "arguments": {
+                    "command-line": (
+                        f'pmemsave 0xb8000 0x{VGA_BYTES:x} "{cls.vga_path}"'
+                    )
+                },
+            }
+        )
+        if not cls.vga_path.exists() or cls.vga_path.stat().st_size != VGA_BYTES:
+            return ""
+        memory = cls.vga_path.read_bytes()
+        return "".join(chr(memory[index]) for index in range(0, len(memory), 2))
+
+    @classmethod
+    def _send_command(cls, command):
+        for character in command + "\n":
+            qcode = {" ": "spc", "\n": "ret", ".": "dot"}.get(
+                character, character
+            )
+            cls._execute_qmp(
+                {
+                    "execute": "send-key",
+                    "arguments": {
+                        "keys": [{"type": "qcode", "data": qcode}],
+                        "hold-time": 10,
+                    },
+                }
+            )
+
+    def _run_shell_command(self, command, expected_output):
+        self._send_command(command)
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            command_position = screen.rfind(command)
+            next_prompt = screen.find("texugos:", command_position + len(command))
+            if expected_output in screen and command_position >= 0 and next_prompt >= 0:
+                return screen
+            time.sleep(0.05)
+        self.fail(
+            f"Shell command {command!r} did not produce {expected_output!r}; "
+            f"VGA:\n{screen}"
+        )
+
+    @classmethod
     def _stop_qemu(cls):
         if hasattr(cls, "qmp_file"):
             cls.qmp_file.close()
@@ -131,11 +168,44 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("Memory: frame allocator and kernel heap active", self.screen)
         self.assertIn("ATA: QEMU HARDDISK", self.screen)
         self.assertIn("FAT32: mount and CRUD test passed", self.screen)
+        self.assertIn("Keyboard: PS/2 input enabled", self.screen)
         self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
         self.assertIn("PIC: remapped; PIT: 100 Hz", self.screen)
         self.assertIn("Threads: 2 cooperative tasks completed", self.screen)
-        self.assertIn("Kernel stage 3 active.", self.screen)
+        self.assertIn("Kernel stage 5 active.", self.screen)
+        self.assertIn("TexugOS shell ready.", self.screen)
         self.assertRegex(self.screen, r"PIT ticks: [1-9][0-9]*")
+
+    def test_shell_commands_and_fat32_navigation(self):
+        self._run_shell_command("help", "Commands: help clear echo ls cd mkdir touch cat rm")
+        self._run_shell_command("version", "TexugOS version 0.1.0")
+        self._run_shell_command("echo ready", "ready")
+        self._run_shell_command("mkdir test", "Directory created.")
+        screen = self._run_shell_command("cd test", "texugos:/TEST >")
+        self.assertIn("texugos:/TEST >", screen)
+        self._run_shell_command("mkdir child", "Directory created.")
+        self._run_shell_command("cd child", "texugos:/TEST/CHILD >")
+        self._run_shell_command("cd ..", "texugos:/TEST >")
+        self._run_shell_command("rm child", "Removed.")
+        self._run_shell_command("touch note", "File created.")
+        self._run_shell_command("ls", "NOTE  0 bytes")
+        screen = self._run_shell_command("cat note", "texugos:/TEST >")
+        self.assertNotIn("Unable to read file", screen)
+        self._run_shell_command("rm note", "Removed.")
+        self._run_shell_command("cd", "texugos:/ >")
+        self._run_shell_command("rm test", "Removed.")
+        self._run_shell_command("memory", "Free physical frames:")
+        self._run_shell_command("processes", "User processes: 0")
+
+        self._send_command("clear")
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            if screen.startswith("texugos:/ >"):
+                break
+            time.sleep(0.05)
+        self.assertTrue(screen.startswith("texugos:/ >"), screen)
 
 
 if __name__ == "__main__":

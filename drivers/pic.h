@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 void pic_initialize(void);
+void pic_unmask_irq(uint32_t irq);
 void pic_send_eoi(uint32_t irq);
 
 #endif

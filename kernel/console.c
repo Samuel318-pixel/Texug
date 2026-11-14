@@ -9,16 +9,38 @@
 
 static uint32_t cursor;
 
+static void scroll_if_needed(void)
+{
+    if (cursor < VGA_WIDTH * VGA_HEIGHT) {
+        return;
+    }
+
+    for (uint32_t index = 0; index < VGA_WIDTH * (VGA_HEIGHT - 1u); ++index) {
+        VGA_MEMORY[index] = VGA_MEMORY[index + VGA_WIDTH];
+    }
+    for (uint32_t index = VGA_WIDTH * (VGA_HEIGHT - 1u);
+         index < VGA_WIDTH * VGA_HEIGHT; ++index) {
+        VGA_MEMORY[index] = (uint16_t)((VGA_COLOR << 8) | ' ');
+    }
+    cursor = VGA_WIDTH * (VGA_HEIGHT - 1u);
+}
+
 static void put_character(char character)
 {
     if (character == '\n') {
         cursor = ((cursor / VGA_WIDTH) + 1u) * VGA_WIDTH;
+        scroll_if_needed();
+        return;
+    }
+    if (character == '\b') {
+        if (cursor != 0u) {
+            --cursor;
+            VGA_MEMORY[cursor] = (uint16_t)((VGA_COLOR << 8) | ' ');
+        }
         return;
     }
 
-    if (cursor >= VGA_WIDTH * VGA_HEIGHT) {
-        cursor = 0;
-    }
+    scroll_if_needed();
     VGA_MEMORY[cursor++] = (uint16_t)((VGA_COLOR << 8) | (uint8_t)character);
 }
 
@@ -35,6 +57,11 @@ void console_write(const char *text)
     while (*text != '\0') {
         put_character(*text++);
     }
+}
+
+void console_write_character(char character)
+{
+    put_character(character);
 }
 
 void console_write_u32(uint32_t value)

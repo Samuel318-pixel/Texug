@@ -53,3 +53,17 @@ void pic_send_eoi(uint32_t irq)
     }
     out8(PIC_MASTER_COMMAND, 0x20u);
 }
+
+void pic_unmask_irq(uint32_t irq)
+{
+    if (irq < 8u) {
+        uint8_t mask;
+        __asm__ volatile ("inb %1, %0" : "=a"(mask) : "Nd"(PIC_MASTER_DATA));
+        out8(PIC_MASTER_DATA, (uint8_t)(mask & ~(1u << irq)));
+    } else if (irq < 16u) {
+        uint8_t mask;
+        __asm__ volatile ("inb %1, %0" : "=a"(mask) : "Nd"(PIC_SLAVE_DATA));
+        out8(PIC_SLAVE_DATA, (uint8_t)(mask & ~(1u << (irq - 8u))));
+        pic_unmask_irq(2u);
+    }
+}

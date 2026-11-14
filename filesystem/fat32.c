@@ -101,6 +101,14 @@ static int make_short_name(const char *name, uint8_t output[11])
     if (name == 0 || name[0] == '\0') {
         return 0;
     }
+    if (name[0] == '.' && (name[1] == '\0' ||
+                           (name[1] == '.' && name[2] == '\0'))) {
+        output[0] = '.';
+        if (name[1] == '.') {
+            output[1] = '.';
+        }
+        return 1;
+    }
 
     uint32_t base_length = 0;
     uint32_t extension_length = 0;

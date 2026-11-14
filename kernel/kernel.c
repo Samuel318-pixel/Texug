@@ -10,6 +10,8 @@
 #include "threads.h"
 #include "ata.h"
 #include "fat32.h"
+#include "keyboard.h"
+#include "shell.h"
 
 #define E820_BUFFER ((volatile const struct e820_entry *)0x5000u)
 #define E820_MAX_ENTRIES 32u
@@ -204,8 +206,10 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     interrupts_initialize();
     pic_initialize();
     pit_initialize(100u);
+    keyboard_initialize();
     console_write("IDT: exceptions and IRQ vectors installed\n");
     console_write("PIC: remapped; PIT: 100 Hz\n");
+    console_write("Keyboard: PS/2 input enabled\n");
 
     __asm__ volatile ("sti");
     uint32_t initial_ticks = pit_ticks_read();
@@ -229,7 +233,6 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     console_write("Threads: ");
     console_write_u32(completed_threads);
     console_write(" cooperative tasks completed\n");
-    console_write("Kernel stage 3 active.\n");
-
-    halt_forever();
+    console_write("Kernel stage 5 active.\n");
+    shell_run();
 }
