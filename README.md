@@ -66,9 +66,10 @@ are claimed or included.
   PCI enumeration, PS/2 keyboard-driven shell and mouse input, and a
   320×200 VGA desktop with clickable icons, a taskbar, pointer, and
   movable/resizable/minimizable/maximizable windows. The desktop includes
-  kernel-integrated Files, Terminal, and System Information apps; the terminal
-  supports basic FAT32 and system commands. Networking has a polled RTL8139
-  driver, DHCP configuration, ARP, IPv4 ICMP echo, and `net`, `dhcp`, and
+  kernel-integrated Files, Terminal, and System Information apps; redraws are
+  limited to 50 Hz while input continues to be processed each loop. The
+  terminal supports basic FAT32 and system commands. Networking has a polled
+  RTL8139 driver, DHCP configuration, ARP, IPv4 ICMP echo, and `net`, `dhcp`,
   `dns` A-record lookup and `ping` shell commands. A text browser can fetch
   HTTP/1.0 pages using IPv4 addresses or DNS names over a minimal TCP client.
   HTTPS is not supported. The desktop also has a native, two-level raycasting

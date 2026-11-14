@@ -12,6 +12,7 @@
 #define TASKBAR_Y 184
 #define WINDOW_MIN_WIDTH 112u
 #define WINDOW_MIN_HEIGHT 72u
+#define DESKTOP_RENDER_INTERVAL_TICKS 2u
 
 struct desktop_window {
     int32_t x;
@@ -343,6 +344,8 @@ void desktop_run(void)
 
     uint8_t previous_buttons = 0u;
     uint32_t previous_mouse_x = VIDEO_WIDTH / 2u;
+    uint32_t last_render_tick =
+        pit_ticks_read() - DESKTOP_RENDER_INTERVAL_TICKS;
     for (;;) {
         struct mouse_state mouse;
         mouse_get_state(&mouse);
@@ -390,7 +393,12 @@ void desktop_run(void)
         }
         previous_mouse_x = mouse_x;
         previous_buttons = mouse.buttons;
-        draw_desktop(mouse_x, mouse_y);
+        uint32_t ticks = pit_ticks_read();
+        if ((uint32_t)(ticks - last_render_tick) >=
+            DESKTOP_RENDER_INTERVAL_TICKS) {
+            draw_desktop(mouse_x, mouse_y);
+            last_render_tick = ticks;
+        }
         __asm__ volatile ("hlt");
     }
 }
