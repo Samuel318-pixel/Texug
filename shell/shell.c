@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "console.h"
+#include "desktop.h"
 #include "fat32.h"
 #include "frame_allocator.h"
 #include "keyboard.h"
@@ -115,7 +116,7 @@ static int parse_command(char *line, char command[COMMAND_NAME_SIZE],
 static void print_help(void)
 {
     console_write("Commands: help clear echo ls cd mkdir touch cat rm\n");
-    console_write("          reboot shutdown memory version processes mouse devices\n");
+    console_write("          reboot shutdown memory version processes mouse devices desktop\n");
 }
 
 static void list_directory(void)
@@ -364,6 +365,8 @@ static void execute_command(char *line)
         console_write("\n");
     } else if (string_equal(command, "devices")) {
         list_pci_devices();
+    } else if (string_equal(command, "desktop")) {
+        desktop_run();
     } else {
         console_write("Unknown command. Type 'help'.\n");
     }

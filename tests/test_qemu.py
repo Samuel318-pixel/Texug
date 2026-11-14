@@ -10,6 +10,7 @@ import unittest
 
 IMAGE_PATH = pathlib.Path("build/texugos.img").resolve()
 VGA_BYTES = 80 * 25 * 2
+GRAPHICS_BYTES = 320 * 200
 
 
 @unittest.skipUnless(shutil.which("qemu-system-i386"), "QEMU is not installed")
@@ -18,6 +19,7 @@ class QemuBootTests(unittest.TestCase):
     def setUpClass(cls):
         cls.tempdir = tempfile.TemporaryDirectory(prefix="texugos-qemu-")
         cls.qemu_image = pathlib.Path(cls.tempdir.name) / "texugos.img"
+        cls.framebuffer_path = pathlib.Path(cls.tempdir.name) / "framebuffer.bin"
         shutil.copyfile(IMAGE_PATH, cls.qemu_image)
         cls.qmp_path = pathlib.Path(cls.tempdir.name) / "qmp.sock"
         cls.vga_path = pathlib.Path(cls.tempdir.name) / "vga.bin"
@@ -142,6 +144,73 @@ class QemuBootTests(unittest.TestCase):
             }
         )
 
+    @classmethod
+    def _send_mouse_button(cls, down):
+        cls._execute_qmp(
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [
+                        {
+                            "type": "btn",
+                            "data": {"button": "left", "down": down},
+                        }
+                    ]
+                },
+            }
+        )
+
+    @classmethod
+    def _move_mouse_to(cls, current_x, current_y, target_x, target_y):
+        delta_x = target_x - current_x
+        delta_y = target_y - current_y
+        while delta_x != 0 or delta_y != 0:
+            step_x = max(-127, min(127, delta_x))
+            step_y = max(-127, min(127, delta_y))
+            cls._send_mouse_move(step_x, step_y)
+            delta_x -= step_x
+            delta_y -= step_y
+        time.sleep(0.1)
+
+    @classmethod
+    def _click_mouse(cls):
+        cls._send_mouse_button(True)
+        time.sleep(0.1)
+        cls._send_mouse_button(False)
+        time.sleep(0.1)
+
+    @classmethod
+    def _send_key(cls, key):
+        cls._execute_qmp(
+            {
+                "execute": "send-key",
+                "arguments": {
+                    "keys": [{"type": "qcode", "data": key}],
+                    "hold-time": 10,
+                },
+            }
+        )
+
+    @classmethod
+    def _read_framebuffer(cls):
+        cls._execute_qmp(
+            {
+                "execute": "human-monitor-command",
+                "arguments": {
+                    "command-line": (
+                        f'pmemsave 0xa0000 0x{GRAPHICS_BYTES:x} '
+                        f'"{cls.framebuffer_path}"'
+                    )
+                },
+            }
+        )
+        if (
+            not cls.framebuffer_path.exists()
+            or cls.framebuffer_path.stat().st_size != GRAPHICS_BYTES
+        ):
+            return b""
+        return cls.framebuffer_path.read_bytes()
+
     def _run_shell_command(self, command, expected_output):
         self._send_command(command)
         deadline = time.monotonic() + 3
@@ -247,6 +316,71 @@ class QemuBootTests(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertTrue(screen.startswith("texugos:/ >"), screen)
+
+    def test_z_graphical_desktop_and_text_mode_return(self):
+        mouse_screen = self._run_shell_command("mouse", "Mouse packets:")
+        mouse_position = mouse_screen.rsplit(" position ", 1)[1].split(
+            " buttons", 1
+        )[0]
+        current_x, current_y = (
+            int(value) for value in mouse_position.split(",")
+        )
+        self._send_command("desktop")
+        deadline = time.monotonic() + 3
+        framebuffer = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[0] == 1:
+                break
+            time.sleep(0.05)
+        self.assertEqual(len(framebuffer), GRAPHICS_BYTES)
+        self.assertEqual(framebuffer[0], 1)
+
+        sample = 120 * 320 + 250
+        wallpaper_pixel = framebuffer[sample]
+
+        self._move_mouse_to(current_x, current_y, 50, 75)
+        self._click_mouse()
+        deadline = time.monotonic() + 3
+        framebuffer = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[sample] == 15:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(wallpaper_pixel, 15)
+        window_pixels = [
+            framebuffer[y * 320 + x]
+            for y in (35, 40, 50, 75, 120, 160)
+            for x in (80, 90, 150, 250, 270)
+        ]
+        self.assertEqual(
+            framebuffer[sample],
+            15,
+            f"mouse started at {current_x},{current_y}; "
+            f"window-region pixels: {window_pixels}",
+        )
+
+        self._move_mouse_to(50, 75, 520, 40)
+        self._click_mouse()
+        deadline = time.monotonic() + 3
+        framebuffer = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[sample] == wallpaper_pixel:
+                break
+            time.sleep(0.05)
+        self.assertEqual(framebuffer[sample], wallpaper_pixel)
+
+        self._send_key("esc")
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            if "Returned from TexugOS Desktop." in screen:
+                break
+            time.sleep(0.05)
+        self.assertIn("Returned from TexugOS Desktop.", screen)
 
 
 if __name__ == "__main__":

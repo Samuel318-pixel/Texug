@@ -17,6 +17,7 @@ static uint8_t caps_key_down;
 static uint8_t extended_scancode;
 
 static const char keymap[128] = {
+    [0x01] = 0x1b,
     [0x02] = '1', [0x03] = '2', [0x04] = '3', [0x05] = '4',
     [0x06] = '5', [0x07] = '6', [0x08] = '7', [0x09] = '8',
     [0x0a] = '9', [0x0b] = '0', [0x0c] = '-', [0x0d] = '=',

@@ -7,7 +7,7 @@ BUILD := build
 
 CFLAGS := -m32 -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
 	-fno-pie -fno-pic -fno-stack-protector -fno-builtin
-CPPFLAGS := -Ikernel -Imemory -Idrivers -Ifilesystem -Ishell
+CPPFLAGS := -Ikernel -Imemory -Idrivers -Ifilesystem -Ishell -Idesktop
 ASFLAGS := --32
 LDFLAGS := -m elf_i386 -nostdlib
 
@@ -60,6 +60,9 @@ $(BUILD)/mouse.o: drivers/mouse.c | $(BUILD)
 $(BUILD)/pci.o: drivers/pci.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
+$(BUILD)/video.o: drivers/video.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
 $(BUILD)/ata.o: drivers/ata.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
@@ -67,6 +70,9 @@ $(BUILD)/fat32.o: filesystem/fat32.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 $(BUILD)/shell.o: shell/shell.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/desktop.o: desktop/desktop.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
 $(BUILD)/interrupt_stubs.o: kernel/interrupt_stubs.S | $(BUILD)
@@ -80,7 +86,8 @@ $(BUILD)/payload.elf: $(BUILD)/stage2.o $(BUILD)/interrupt_stubs.o \
 		$(BUILD)/interrupts.o $(BUILD)/threads.o $(BUILD)/paging.o \
 		$(BUILD)/frame_allocator.o $(BUILD)/heap.o \
 		$(BUILD)/pic.o $(BUILD)/pit.o $(BUILD)/keyboard.o $(BUILD)/mouse.o \
-		$(BUILD)/pci.o $(BUILD)/ata.o $(BUILD)/fat32.o $(BUILD)/shell.o \
+		$(BUILD)/pci.o $(BUILD)/video.o $(BUILD)/desktop.o $(BUILD)/ata.o \
+		$(BUILD)/fat32.o $(BUILD)/shell.o \
 		boot/payload.ld
 	$(LD) $(LDFLAGS) -T boot/payload.ld -o $@ $(filter %.o,$^)
 
