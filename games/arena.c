@@ -188,23 +188,31 @@ static void move_player(int32_t dx, int32_t dy)
     }
 }
 
-static int try_move_enemy(uint32_t index, int32_t step_x, int32_t step_y)
+static int enemy_can_enter(uint32_t index, int32_t x, int32_t y)
 {
-    int32_t next_x = (int32_t)enemies[index].x + step_x;
-    int32_t next_y = (int32_t)enemies[index].y + step_y;
-    if (next_x < 0 || next_y < 0 || next_x >= (int32_t)MAP_SIZE ||
-        next_y >= (int32_t)MAP_SIZE ||
-        worlds[current_level - 1u][next_y][next_x] == '#' ||
-        ((uint32_t)next_x == ((uint32_t)player_x >> 8) &&
-         (uint32_t)next_y == ((uint32_t)player_y >> 8))) {
+    if (x < 0 || y < 0 || x >= (int32_t)MAP_SIZE ||
+        y >= (int32_t)MAP_SIZE ||
+        worlds[current_level - 1u][y][x] == '#' ||
+        ((uint32_t)x == ((uint32_t)player_x >> 8) &&
+         (uint32_t)y == ((uint32_t)player_y >> 8))) {
         return 0;
     }
     for (uint32_t other = 0u; other < ENEMY_COUNT; ++other) {
         if (other != index && enemies[other].alive &&
-            enemies[other].x == (uint32_t)next_x &&
-            enemies[other].y == (uint32_t)next_y) {
+            enemies[other].x == (uint32_t)x &&
+            enemies[other].y == (uint32_t)y) {
             return 0;
         }
+    }
+    return 1;
+}
+
+static int try_move_enemy(uint32_t index, int32_t step_x, int32_t step_y)
+{
+    int32_t next_x = (int32_t)enemies[index].x + step_x;
+    int32_t next_y = (int32_t)enemies[index].y + step_y;
+    if (!enemy_can_enter(index, next_x, next_y)) {
+        return 0;
     }
     enemies[index].x = (uint8_t)next_x;
     enemies[index].y = (uint8_t)next_y;
@@ -213,23 +221,56 @@ static int try_move_enemy(uint32_t index, int32_t step_x, int32_t step_y)
 
 static void move_enemy_toward_player(uint32_t index)
 {
-    int32_t delta_x = (int32_t)((uint32_t)player_x >> 8) - enemies[index].x;
-    int32_t delta_y = (int32_t)((uint32_t)player_y >> 8) - enemies[index].y;
-    int32_t abs_x = delta_x < 0 ? -delta_x : delta_x;
-    int32_t abs_y = delta_y < 0 ? -delta_y : delta_y;
-    int prefer_x = abs_x >= abs_y;
+    static const int8_t step_x[4] = {1, -1, 0, 0};
+    static const int8_t step_y[4] = {0, 0, 1, -1};
+    uint8_t queue[MAP_SIZE * MAP_SIZE];
+    int8_t first_step[MAP_SIZE * MAP_SIZE];
+    uint32_t start = (uint32_t)enemies[index].y * MAP_SIZE +
+                     enemies[index].x;
+    uint32_t player_cell_x = (uint32_t)player_x >> 8;
+    uint32_t player_cell_y = (uint32_t)player_y >> 8;
+    uint32_t head = 0u;
+    uint32_t tail = 0u;
 
-    for (uint32_t attempt = 0u; attempt < 2u; ++attempt) {
-        int move_x = attempt == 0u ? prefer_x : !prefer_x;
-        int32_t step_x = move_x && delta_x != 0
-                             ? (delta_x < 0 ? -1 : 1)
-                             : 0;
-        int32_t step_y = !move_x && delta_y != 0
-                             ? (delta_y < 0 ? -1 : 1)
-                             : 0;
-        if ((step_x != 0 || step_y != 0) &&
-            try_move_enemy(index, step_x, step_y)) {
+    for (uint32_t cell = 0u; cell < MAP_SIZE * MAP_SIZE; ++cell) {
+        first_step[cell] = -1;
+    }
+    first_step[start] = 0;
+    queue[tail++] = (uint8_t)start;
+
+    while (head < tail) {
+        uint32_t cell = queue[head++];
+        int32_t x = (int32_t)(cell % MAP_SIZE);
+        int32_t y = (int32_t)(cell / MAP_SIZE);
+        uint32_t distance_x = x < (int32_t)player_cell_x
+                                 ? player_cell_x - (uint32_t)x
+                                 : (uint32_t)x - player_cell_x;
+        uint32_t distance_y = y < (int32_t)player_cell_y
+                                 ? player_cell_y - (uint32_t)y
+                                 : (uint32_t)y - player_cell_y;
+        if (distance_x + distance_y == 1u) {
+            if (cell != start) {
+                uint32_t direction = (uint32_t)first_step[cell];
+                (void)try_move_enemy(index, step_x[direction],
+                                     step_y[direction]);
+            }
             return;
+        }
+
+        for (uint32_t direction = 0u; direction < 4u; ++direction) {
+            int32_t next_x = x + step_x[direction];
+            int32_t next_y = y + step_y[direction];
+            if (!enemy_can_enter(index, next_x, next_y)) {
+                continue;
+            }
+            uint32_t next = (uint32_t)next_y * MAP_SIZE + (uint32_t)next_x;
+            if (first_step[next] >= 0) {
+                continue;
+            }
+            first_step[next] = cell == start
+                                   ? (int8_t)direction
+                                   : first_step[cell];
+            queue[tail++] = (uint8_t)next;
         }
     }
 }

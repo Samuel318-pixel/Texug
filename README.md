@@ -90,8 +90,9 @@ are claimed or included.
   stack use separate pages; this is a test harness, not a process runtime.
 - Partial: DNS currently resolves IPv4 A records only. The game has two
   compact arena layouts; QEMU tests combat in the first and progression to
-  the second. Enemies pursue the player, and the PC speaker provides firing,
-  hit, damage, and reload tones; audible output is unverified. Stage 6 device
+  the second. Enemies route around walls while pursuing the player. The PC
+  speaker provides firing, hit, damage, and reload tones; audible output is
+  unverified. Stage 6 device
   support and all networking have only been exercised with QEMU-emulated
   hardware.
   Desktop apps and the game run inside the kernel; there is no user-mode
