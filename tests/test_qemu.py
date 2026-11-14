@@ -322,7 +322,7 @@ class QemuBootTests(unittest.TestCase):
         self.assertRegex(self.screen, r"PCI: [1-9][0-9]* devices enumerated")
         self.assertIn("Network: RTL8139 ready", self.screen)
         self.assertIn("ATA: QEMU HARDDISK", self.screen)
-        self.assertIn("FAT32: mount and CRUD test passed", self.screen)
+        self.assertIn("FAT32: mount, CRUD and LFN test passed", self.screen)
         self.assertIn("Keyboard: PS/2 input enabled", self.screen)
         self.assertIn("Mouse: PS/2 initialized", self.screen)
         self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
@@ -543,6 +543,23 @@ class QemuBootTests(unittest.TestCase):
         self._run_shell_command("rm note", "Removed.")
         self._run_shell_command("cd", "texugos:/ >")
         self._run_shell_command("rm test", "Removed.")
+        self._run_shell_command(
+            "mkdir long directory with spaces", "Directory created."
+        )
+        self._run_shell_command(
+            "cd long directory with spaces",
+            "texugos:/long directory with spaces >",
+        )
+        self._run_shell_command("touch note with spaces.txt", "File created.")
+        self._run_shell_command("ls", "note with spaces.txt  0 bytes")
+        self._run_shell_command(
+            "cat note with spaces.txt", "texugos:/long directory with spaces >"
+        )
+        self._run_shell_command("rm note with spaces.txt", "Removed.")
+        self._run_shell_command("cd ..", "texugos:/ >")
+        self._run_shell_command(
+            "rm long directory with spaces", "Removed."
+        )
         self._run_shell_command("memory", "Free physical frames:")
         self._run_shell_command("processes", "User processes: 0")
 

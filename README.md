@@ -6,7 +6,7 @@ input, and a basic graphical desktop.
 
 ## Current implementation (partial)
 
-The boot image contains a 512-byte boot sector followed by a fixed 96-sector
+The boot image contains a 512-byte boot sector followed by a fixed 104-sector
 payload and a FAT32 partition. The boot sector uses BIOS LBA extensions when
 available and falls back to BIOS CHS reads when needed, loads the payload at
 physical address `0x10000`, and transfers control to it. The payload collects
@@ -17,9 +17,10 @@ handlers in the IDT, remaps the 8259 PIC, and starts the PIT at 100 Hz. Timer
 interrupts are acknowledged and counted. A physical-frame bitmap is populated
 from E820, the kernel has a small coalescing heap, and a preemptive scheduler
 can switch between kernel threads with separate stacks. A polled primary-master
-ATA PIO driver mounts the image's FAT32 partition and supports short-name file
-and directory creation, reading, and deletion. The kernel also provides a
-PCI enumeration for hardware identification, PS/2 keyboard and mouse IRQ
+ATA PIO driver mounts the image's FAT32 partition and supports 8.3 aliases,
+ASCII VFAT long names, and file/directory creation, reading, and deletion. The
+kernel also provides PCI enumeration for hardware identification, PS/2
+keyboard and mouse IRQ
 handlers, and an interactive text shell with
 `help`, `clear`, `echo`, `ls`, `cd`, `mkdir`, `touch`, `cat`, `rm`, `reboot`,
 `shutdown`, `memory`, `version`, `processes`, and `mouse` commands.
@@ -47,7 +48,8 @@ make run-iso
 `make test` builds the image, checks its boot-sector signature and FAT32
 partition layout, and runs a headless QEMU test. It checks the kernel's boot
 status and sends keyboard and mouse input to exercise shell commands, PCI
-device listing, FAT32 directory navigation, and PS/2 mouse packet handling.
+device listing, FAT32 short and long filename CRUD, directory navigation, and
+PS/2 mouse packet handling.
 It also verifies the 320×200 VGA desktop, opens and closes a window using the
 mouse, exercises the graphical terminal and FAT32 file browser, checks the
 system-information app, starts the native raycasting arena, verifies enemy
@@ -93,8 +95,10 @@ are claimed or included.
   processes and isolation are not implemented. Networking has no TLS/HTTPS,
   JavaScript, or general-purpose TCP sockets and has only been tested with
   QEMU user-mode networking.
-- Not yet implemented: AHCI/SATA hardware verification, long filenames, a
-  full-featured browser, or user-mode applications.
+- Partial: FAT32 long filenames support ASCII names up to 255 characters with
+  generated 8.3 aliases; Unicode names are not supported.
+- Not yet implemented: AHCI/SATA hardware verification, a full-featured
+  browser, or user-mode applications.
 - The QEMU smoke test confirms boot in emulation; physical hardware has not
   been tested.
 - The ISO boots through BIOS El Torito hard-disk emulation; the kernel's ATA

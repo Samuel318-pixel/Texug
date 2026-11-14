@@ -6,7 +6,7 @@
 #define FAT32_ATTRIBUTE_DIRECTORY 0x10u
 
 struct fat32_entry {
-    char name[13];
+    char name[256];
     uint8_t attributes;
     uint32_t size;
     uint32_t first_cluster;

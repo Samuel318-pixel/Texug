@@ -103,7 +103,7 @@ class QemuIsoBootTests(unittest.TestCase):
                     time.sleep(0.1)
 
                 self.assertIn("TexugOS shell ready.", screen)
-                self.assertIn("FAT32: mount and CRUD test passed", screen)
+                self.assertIn("FAT32: mount, CRUD and LFN test passed", screen)
             finally:
                 if connection is not None:
                     connection.close()

@@ -50,7 +50,7 @@ chs_load:
     incw %ax
     movw %ax, heads_per_cylinder
     movw $1, current_lba
-    movw $96, sectors_left
+    movw $104, sectors_left
     movw $0, buffer_offset
 
 chs_read_next:
@@ -116,7 +116,7 @@ boot_drive:
 
 disk_packet:
     .byte 0x10, 0x00
-    .word 96
+    .word 104
     .word 0x0000
     .word 0x1000
     .quad 1
