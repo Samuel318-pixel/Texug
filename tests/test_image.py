@@ -50,7 +50,7 @@ class BootImageTests(unittest.TestCase):
         ]
         self.assertIn(b"TexugOS: collecting E820 memory map", payload)
         self.assertIn(b"TexugOS: E820 memory map failed", payload)
-        self.assertIn(b"Kernel stages 6-9 active (partial).", payload)
+        self.assertIn(b"Kernel stages 6-10 active (partial).", payload)
         self.assertIn(struct.pack("<I", 0x54455847), payload)
 
 

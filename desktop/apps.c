@@ -4,16 +4,21 @@
 #include "fat32.h"
 #include "frame_allocator.h"
 #include "mouse.h"
+#include "network.h"
 #include "pci.h"
 #include "pit.h"
 #include "video.h"
 
-#define APP_COUNT 3u
+#define APP_COUNT 4u
 #define FILE_CAPACITY 64u
 #define FILE_PREVIEW_SIZE 256u
 #define TERMINAL_ROWS 6u
 #define TERMINAL_LINE_SIZE 28u
 #define TERMINAL_INPUT_SIZE 40u
+#define BROWSER_RESPONSE_SIZE 768u
+#define BROWSER_LINE_COUNT 6u
+#define BROWSER_LINE_SIZE 28u
+#define BROWSER_INPUT_SIZE 64u
 
 static uint32_t files_directory;
 static uint32_t files_selected;
@@ -30,6 +35,11 @@ static uint32_t terminal_line_count;
 static char terminal_input[TERMINAL_INPUT_SIZE];
 static uint32_t terminal_input_length;
 static struct fat32_entry terminal_entries[FILE_CAPACITY];
+static char browser_input[BROWSER_INPUT_SIZE];
+static uint32_t browser_input_length;
+static char browser_lines[BROWSER_LINE_COUNT][BROWSER_LINE_SIZE];
+static uint32_t browser_line_count;
+static char browser_status[BROWSER_LINE_SIZE];
 
 static uint32_t text_length(const char *text)
 {
@@ -223,6 +233,173 @@ static void terminal_execute(void)
     terminal_input[0] = '\0';
 }
 
+static int parse_browser_target(const char *text, uint8_t address[4],
+                                uint16_t *port, char path[96])
+{
+    const char *cursor = text;
+    for (uint32_t part = 0u; part < 4u; ++part) {
+        uint32_t value = 0u;
+        uint32_t digits = 0u;
+        while (*cursor >= '0' && *cursor <= '9') {
+            value = value * 10u + (uint32_t)(*cursor++ - '0');
+            if (value > 255u || ++digits > 3u) {
+                return 0;
+            }
+        }
+        if (digits == 0u) {
+            return 0;
+        }
+        address[part] = (uint8_t)value;
+        if (part < 3u) {
+            if (*cursor != '.') {
+                return 0;
+            }
+            ++cursor;
+        }
+    }
+
+    *port = 80u;
+    if (*cursor == ':') {
+        ++cursor;
+        uint32_t value = 0u;
+        uint32_t digits = 0u;
+        while (*cursor >= '0' && *cursor <= '9') {
+            value = value * 10u + (uint32_t)(*cursor++ - '0');
+            if (value > 65535u || ++digits > 5u) {
+                return 0;
+            }
+        }
+        if (digits == 0u || value == 0u) {
+            return 0;
+        }
+        *port = (uint16_t)value;
+    }
+
+    if (*cursor == '\0') {
+        path[0] = '/';
+        path[1] = '\0';
+        return 1;
+    }
+    if (*cursor != '/') {
+        return 0;
+    }
+    text_copy(path, cursor, 96u);
+    return text_length(path) == text_length(cursor);
+}
+
+static void browser_add_character(char character, uint32_t *line_length,
+                                  char line[BROWSER_LINE_SIZE])
+{
+    if (*line_length + 1u >= BROWSER_LINE_SIZE ||
+        browser_line_count == BROWSER_LINE_COUNT) {
+        return;
+    }
+    line[(*line_length)++] = character;
+}
+
+static void browser_flush_line(char line[BROWSER_LINE_SIZE],
+                               uint32_t *line_length)
+{
+    if (browser_line_count == BROWSER_LINE_COUNT) {
+        *line_length = 0u;
+        return;
+    }
+    line[*line_length] = '\0';
+    text_copy(browser_lines[browser_line_count++], line,
+              BROWSER_LINE_SIZE);
+    *line_length = 0u;
+}
+
+static int browser_render_response(const char *response, uint32_t length)
+{
+    uint32_t body = 0u;
+    while (body + 3u < length) {
+        if (response[body] == '\r' && response[body + 1u] == '\n' &&
+            response[body + 2u] == '\r' && response[body + 3u] == '\n') {
+            body += 4u;
+            break;
+        }
+        ++body;
+    }
+    if (body >= length) {
+        return 0;
+    }
+
+    uint8_t inside_tag = 0u;
+    char line[BROWSER_LINE_SIZE];
+    uint32_t line_length = 0u;
+    for (uint32_t index = body; index < length; ++index) {
+        char character = response[index];
+        if (character == '<') {
+            inside_tag = 1u;
+            continue;
+        }
+        if (character == '>') {
+            inside_tag = 0u;
+            browser_add_character(' ', &line_length, line);
+            continue;
+        }
+        if (inside_tag) {
+            continue;
+        }
+        if (character == '\r') {
+            continue;
+        }
+        if (character == '\n') {
+            browser_flush_line(line, &line_length);
+            if (browser_line_count == BROWSER_LINE_COUNT) {
+                break;
+            }
+        } else if (character == ' ' || character == '\t') {
+            if (line_length != 0u &&
+                line[line_length - 1u] != ' ') {
+                browser_add_character(' ', &line_length, line);
+            }
+        } else if (character >= ' ' && character <= '~') {
+            browser_add_character(character, &line_length, line);
+        }
+    }
+    if (line_length != 0u && browser_line_count < BROWSER_LINE_COUNT) {
+        browser_flush_line(line, &line_length);
+    }
+    return 1;
+}
+
+static void browser_load_page(void)
+{
+    uint8_t address[4];
+    uint16_t port;
+    char path[96];
+    browser_line_count = 0u;
+    if (!parse_browser_target(browser_input, address, &port, path)) {
+        text_copy(browser_status, "INVALID IPV4 URL",
+                  sizeof(browser_status));
+        return;
+    }
+    struct network_config config;
+    network_get_config(&config);
+    if (config.configured == 0u) {
+        text_copy(browser_status, "RUN DHCP FIRST", sizeof(browser_status));
+        return;
+    }
+
+    char response[BROWSER_RESPONSE_SIZE];
+    uint32_t response_length = 0u;
+    if (!network_http_get(address, port, path, response, sizeof(response),
+                          &response_length)) {
+        text_copy(browser_status, "HTTP REQUEST FAILED",
+                  sizeof(browser_status));
+        return;
+    }
+    if (!browser_render_response(response, response_length)) {
+        text_copy(browser_status, "INVALID HTTP RESPONSE",
+                  sizeof(browser_status));
+        return;
+    }
+    text_copy(browser_status, "HTTP RESPONSE RECEIVED",
+              sizeof(browser_status));
+}
+
 static void draw_terminal(int32_t x, int32_t y)
 {
     video_draw_text(x + 5, y + 5, "TEXUGOS TERMINAL", 1u);
@@ -231,7 +408,23 @@ static void draw_terminal(int32_t x, int32_t y)
                         terminal_lines[row], 1u);
     }
     video_draw_text(x + 5, y + 87, ">", 1u);
-    video_draw_text(x + 17, y + 87, terminal_input, 1u);
+    uint32_t input_start = terminal_input_length > 27u
+        ? terminal_input_length - 27u : 0u;
+    video_draw_text(x + 17, y + 87, terminal_input + input_start, 1u);
+}
+
+static void draw_browser(int32_t x, int32_t y)
+{
+    video_draw_text(x + 5, y + 5, "IPV4 HTTP BROWSER", 1u);
+    video_draw_text(x + 5, y + 16, browser_status, 4u);
+    for (uint32_t row = 0u; row < browser_line_count; ++row) {
+        video_draw_text(x + 5, y + 28 + (int32_t)row * 10,
+                        browser_lines[row], 1u);
+    }
+    video_draw_text(x + 5, y + 87, ">", 1u);
+    uint32_t input_start = browser_input_length > 27u
+        ? browser_input_length - 27u : 0u;
+    video_draw_text(x + 17, y + 87, browser_input + input_start, 1u);
 }
 
 static void refresh_file_list(void)
@@ -355,6 +548,11 @@ void desktop_apps_initialize(void)
     terminal_clear_lines();
     terminal_add_line("TEXUGOS TERMINAL READY");
     terminal_add_line("TYPE HELP FOR COMMANDS");
+    browser_input_length = 0u;
+    browser_input[0] = '\0';
+    browser_line_count = 0u;
+    text_copy(browser_status, "ENTER IP:PORT/PATH",
+              sizeof(browser_status));
 }
 
 void desktop_app_draw(uint32_t index, int32_t x, int32_t y,
@@ -368,8 +566,10 @@ void desktop_app_draw(uint32_t index, int32_t x, int32_t y,
         draw_files(x, y, height);
     } else if (index == 1u) {
         draw_terminal(x, y);
-    } else {
+    } else if (index == 2u) {
         draw_settings(x, y);
+    } else {
+        draw_browser(x, y);
     }
 }
 
@@ -409,6 +609,20 @@ void desktop_app_handle_key(uint32_t index, char key)
         return;
     }
 
+    if (index == 3u) {
+        if (key == '\n') {
+            browser_load_page();
+        } else if (key == '\b') {
+            if (browser_input_length != 0u) {
+                browser_input[--browser_input_length] = '\0';
+            }
+        } else if (key >= ' ' && key <= '~' &&
+                   browser_input_length + 1u < BROWSER_INPUT_SIZE) {
+            browser_input[browser_input_length++] = key;
+            browser_input[browser_input_length] = '\0';
+        }
+        return;
+    }
     if (index != 1u) {
         return;
     }

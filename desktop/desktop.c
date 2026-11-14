@@ -8,7 +8,7 @@
 #include "pit.h"
 #include "video.h"
 
-#define WINDOW_COUNT 3u
+#define WINDOW_COUNT 4u
 #define TASKBAR_Y 184
 #define WINDOW_MIN_WIDTH 112u
 #define WINDOW_MIN_HEIGHT 72u
@@ -30,7 +30,7 @@ enum drag_mode {
 };
 
 static const char *const window_titles[WINDOW_COUNT] = {
-    "FILES", "TERMINAL", "SETTINGS",
+    "FILES", "TERMINAL", "SETTINGS", "BROWSER",
 };
 static struct desktop_window windows[WINDOW_COUNT];
 static int32_t active_window = -1;
@@ -64,9 +64,14 @@ static void draw_icon(uint32_t index)
         video_fill_rect(x + 5, y + 5, 12u, 10u, 1u);
         video_fill_rect(x + 7, y + 7, 8u, 1u, 15u);
         video_fill_rect(x + 7, y + 10, 6u, 1u, 15u);
-    } else {
+    } else if (index == 2u) {
         video_fill_rect(x + 6, y + 4, 10u, 12u, 15u);
         video_fill_rect(x + 9, y + 7, 4u, 6u, color);
+    } else {
+        video_fill_rect(x + 5, y + 3, 12u, 14u, 15u);
+        video_fill_rect(x + 7, y + 5, 8u, 2u, color);
+        video_fill_rect(x + 7, y + 9, 8u, 1u, color);
+        video_fill_rect(x + 7, y + 12, 6u, 1u, color);
     }
 
     video_draw_text(6, y + 23, window_titles[index], 15u);
@@ -158,6 +163,7 @@ static void draw_start_menu(void)
     video_draw_text(13, 130, "FILES", 15u);
     video_draw_text(13, 145, "TERMINAL", 15u);
     video_draw_text(13, 160, "SETTINGS", 15u);
+    video_draw_text(13, 175, "BROWSER", 15u);
 }
 
 static void draw_cursor(uint32_t x, uint32_t y)
@@ -204,6 +210,9 @@ static void open_window(uint32_t index)
         window->y = 28 + (int32_t)index * 7;
         window->width = 192u;
         window->height = 138u;
+        if (window->y + (int32_t)window->height > TASKBAR_Y) {
+            window->y = TASKBAR_Y - (int32_t)window->height;
+        }
     }
     active_window = (int32_t)index;
     menu_open = 0u;
@@ -357,6 +366,8 @@ void desktop_run(void)
                 open_window(1u);
             } else if (key == '3') {
                 open_window(2u);
+            } else if (key == '4') {
+                open_window(3u);
             }
         }
 

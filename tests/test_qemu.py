@@ -1,10 +1,12 @@
 import json
+import http.server
 import pathlib
 import shutil
 import signal
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 
@@ -13,11 +15,31 @@ VGA_BYTES = 80 * 25 * 2
 GRAPHICS_BYTES = 320 * 200
 
 
+class BrowserTestHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"TEXUGOS BROWSER TEST\r\n"
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format_string, *args):
+        pass
+
+
 @unittest.skipUnless(shutil.which("qemu-system-i386"), "QEMU is not installed")
 class QemuBootTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tempdir = tempfile.TemporaryDirectory(prefix="texugos-qemu-")
+        cls.http_server = http.server.ThreadingHTTPServer(
+            ("127.0.0.1", 0), BrowserTestHandler
+        )
+        cls.http_port = cls.http_server.server_address[1]
+        cls.http_thread = threading.Thread(
+            target=cls.http_server.serve_forever, daemon=True
+        )
+        cls.http_thread.start()
         cls.qemu_image = pathlib.Path(cls.tempdir.name) / "texugos.img"
         cls.framebuffer_path = pathlib.Path(cls.tempdir.name) / "framebuffer.bin"
         shutil.copyfile(IMAGE_PATH, cls.qemu_image)
@@ -69,6 +91,8 @@ class QemuBootTests(unittest.TestCase):
                 )
         except Exception:
             cls._stop_qemu()
+            cls.http_server.shutdown()
+            cls.http_server.server_close()
             cls.tempdir.cleanup()
             raise
 
@@ -120,14 +144,21 @@ class QemuBootTests(unittest.TestCase):
     @classmethod
     def _send_command(cls, command):
         for character in command + "\n":
-            qcode = {" ": "spc", "\n": "ret", ".": "dot"}.get(
-                character, character
-            )
+            qcodes = {
+                " ": ["spc"],
+                "\n": ["ret"],
+                ".": ["dot"],
+                ":": ["shift", "semicolon"],
+                "/": ["slash"],
+            }.get(character, [character])
             cls._execute_qmp(
                 {
                     "execute": "send-key",
                     "arguments": {
-                        "keys": [{"type": "qcode", "data": qcode}],
+                        "keys": [
+                            {"type": "qcode", "data": qcode}
+                            for qcode in qcodes
+                        ],
                         "hold-time": 10,
                     },
                 }
@@ -269,6 +300,9 @@ class QemuBootTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls._stop_qemu()
+        cls.http_server.shutdown()
+        cls.http_server.server_close()
+        cls.http_thread.join(timeout=1)
         cls.tempdir.cleanup()
 
     def test_kernel_reports_working_memory_and_interrupt_setup(self):
@@ -284,7 +318,7 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
         self.assertIn("PIC: remapped; PIT: 100 Hz", self.screen)
         self.assertIn("Threads: 2 cooperative tasks completed", self.screen)
-        self.assertIn("Kernel stages 6-9 active (partial).", self.screen)
+        self.assertIn("Kernel stages 6-10 active (partial).", self.screen)
         self.assertIn("TexugOS shell ready.", self.screen)
         self.assertRegex(self.screen, r"PIT ticks: [1-9][0-9]*")
 
@@ -446,6 +480,52 @@ class QemuBootTests(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertGreater(settings_text_pixels, 20)
+        self._move_mouse_to(50, 125, 550, 50)
+        self._click_mouse()
+        self._send_key("4")
+        deadline = time.monotonic() + 3
+        framebuffer = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[sample] == 15:
+                break
+            time.sleep(0.05)
+        self.assertEqual(framebuffer[sample], 15)
+        browser_before = self._framebuffer_region(
+            framebuffer, 100, 70, 180, 90
+        )
+        self._send_command(f"10.0.2.2:{self.http_port}")
+        deadline = time.monotonic() + 3
+        browser_input = browser_before
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            browser_input = self._framebuffer_region(
+                framebuffer, 100, 70, 180, 90
+            )
+            if browser_input != browser_before:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(browser_input, browser_before)
+        browser_page_before = browser_input
+        self._send_key("ret")
+        deadline = time.monotonic() + 10
+        browser_after = browser_page_before
+        browser_text_pixels = 0
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            browser_after = self._framebuffer_region(
+                framebuffer, 100, 70, 180, 90
+            )
+            browser_text_pixels = sum(
+                framebuffer[row * 320 + column] == 1
+                for row in range(91, 99)
+                for column in range(104, 224)
+            ) if len(framebuffer) == GRAPHICS_BYTES else 0
+            if browser_after != browser_page_before and browser_text_pixels > 30:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(browser_after, browser_page_before)
+        self.assertGreater(browser_text_pixels, 30)
         self._send_key("esc")
         deadline = time.monotonic() + 3
         screen = ""

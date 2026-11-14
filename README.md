@@ -4,7 +4,7 @@ TexugOS is an experimental x86 operating system being developed in stages. Its
 current milestones cover the Legacy BIOS boot path, storage, shell, emulated
 input, and a basic graphical desktop.
 
-## Implemented: Stages 1-5; Stages 6-9 (partial)
+## Implemented: Stages 1-5; Stages 6-10 (partial)
 
 The boot image contains a 512-byte boot sector followed by a fixed 96-sector
 payload and a FAT32 partition. The boot sector checks BIOS LBA-extension
@@ -45,7 +45,8 @@ device listing, FAT32 directory navigation, and PS/2 mouse packet handling.
 It also verifies the 320×200 VGA desktop, opens and closes a window using the
 mouse, exercises the graphical terminal and FAT32 file browser, checks the
 system-information app, obtains a DHCP lease, pings the QEMU network gateway,
-and confirms that Escape restores text mode.
+loads a page from a local HTTP test server through QEMU networking, and
+confirms that Escape restores text mode.
 The kernel also creates a directory and a 700-byte file, verifies its contents,
 then removes both.
 `make run` starts QEMU with the raw disk image.
@@ -64,14 +65,15 @@ are claimed or included.
   kernel-integrated Files, Terminal, and System Information apps; the terminal
   supports basic FAT32 and system commands. Networking has a polled RTL8139
   driver, DHCP configuration, ARP, IPv4 ICMP echo, and `net`, `dhcp`, and
-  `ping` shell commands.
+  `ping` shell commands. A text browser can fetch HTTP/1.0 pages from IPv4
+  addresses over a minimal TCP client.
 - Partial: Stage 6 device support has only been exercised with QEMU-emulated
   hardware. The desktop apps run inside the kernel; user-mode application
   processes and isolation are not implemented. Network support currently has
-  no TCP sockets or DNS client and has only been tested with QEMU user-mode
-  networking.
+  no DNS, HTTPS, JavaScript, or general-purpose TCP sockets and has only been
+  tested with QEMU user-mode networking.
 - Not yet implemented: preemptive scheduling, AHCI/SATA hardware verification,
-  long filenames, TCP applications, or user-mode applications.
+  long filenames, a full-featured browser, or user-mode applications.
 - The QEMU smoke test confirms boot in emulation; physical hardware has not
   been tested.
 - The ATA device is QEMU's emulated disk; physical HP G42-215BR hardware is

@@ -12,6 +12,7 @@
 #define PACKET_CAPACITY 1600u
 #define DHCP_TIMEOUT_TICKS 150u
 #define PING_TIMEOUT_TICKS 200u
+#define TCP_TIMEOUT_TICKS 500u
 #define DHCP_TRANSACTION_ID 0x54584731u
 #define ICMP_IDENTIFIER 0x5447u
 
@@ -31,12 +32,20 @@ struct dhcp_reply {
 
 static struct network_config configuration;
 static uint8_t hardware_address[6];
-static uint8_t transmit_packet[DHCP_MAX_SIZE];
+static uint8_t transmit_packet[PACKET_CAPACITY];
 static uint8_t dhcp_payload[DHCP_MAX_SIZE];
 static uint8_t receive_packet[PACKET_CAPACITY];
 static uint16_t ipv4_identifier;
 static uint8_t network_available;
 static const char *dhcp_error;
+
+struct tcp_segment {
+    uint32_t sequence;
+    uint32_t acknowledgment;
+    uint8_t flags;
+    const uint8_t *payload;
+    uint16_t payload_length;
+};
 
 static uint16_t read_be16(const uint8_t *data)
 {
@@ -97,6 +106,63 @@ static uint16_t internet_checksum(const uint8_t *data, uint32_t length)
         sum = (sum & 0xffffu) + (sum >> 16);
     }
     return (uint16_t)~sum;
+}
+
+static uint16_t tcp_checksum(const uint8_t *segment, uint16_t length,
+                             const uint8_t destination[4])
+{
+    uint32_t sum = 0u;
+    for (uint32_t index = 0u; index < 4u; index += 2u) {
+        sum += read_be16(configuration.address + index);
+        sum += read_be16(destination + index);
+    }
+    sum += 6u;
+    sum += length;
+
+    while (length >= 2u) {
+        sum += read_be16(segment);
+        segment += 2u;
+        length = (uint16_t)(length - 2u);
+    }
+    if (length != 0u) {
+        sum += (uint16_t)segment[0] << 8;
+    }
+    while ((sum >> 16) != 0u) {
+        sum = (sum & 0xffffu) + (sum >> 16);
+    }
+    return (uint16_t)~sum;
+}
+
+static int append_text(char *buffer, uint32_t capacity, uint32_t *length,
+                       const char *text)
+{
+    while (*text != '\0') {
+        if (*length + 1u >= capacity) {
+            return 0;
+        }
+        buffer[(*length)++] = *text++;
+    }
+    buffer[*length] = '\0';
+    return 1;
+}
+
+static int append_decimal(char *buffer, uint32_t capacity, uint32_t *length,
+                          uint16_t value)
+{
+    char digits[5];
+    uint32_t count = 0u;
+    do {
+        digits[count++] = (char)('0' + value % 10u);
+        value = (uint8_t)(value / 10u);
+    } while (value != 0u);
+    while (count != 0u) {
+        if (*length + 1u >= capacity) {
+            return 0;
+        }
+        buffer[(*length)++] = digits[--count];
+    }
+    buffer[*length] = '\0';
+    return 1;
 }
 
 static void write_ethernet_header(uint8_t *frame, const uint8_t *destination,
@@ -349,6 +415,99 @@ static int wait_for_arp(const uint8_t target[4], uint8_t mac[6])
     return 0;
 }
 
+static int resolve_ipv4_mac(const uint8_t address[4], uint8_t mac[6])
+{
+    uint8_t next_hop[4];
+    int same_subnet = 1;
+    for (uint32_t index = 0u; index < 4u; ++index) {
+        if ((address[index] & configuration.subnet_mask[index]) !=
+            (configuration.address[index] & configuration.subnet_mask[index])) {
+            same_subnet = 0;
+        }
+    }
+    copy_bytes(next_hop, same_subnet ? address : configuration.gateway, 4u);
+    return send_arp_request(next_hop) && wait_for_arp(next_hop, mac);
+}
+
+static int send_tcp_segment(const uint8_t destination_mac[6],
+                            const uint8_t destination_ip[4],
+                            uint16_t source_port, uint16_t destination_port,
+                            uint32_t sequence, uint32_t acknowledgment,
+                            uint8_t flags, const uint8_t *payload,
+                            uint16_t payload_length)
+{
+    uint16_t tcp_length = (uint16_t)(20u + payload_length);
+    uint32_t frame_length = ETHERNET_HEADER_SIZE + IPV4_HEADER_SIZE +
+                            tcp_length;
+    if (frame_length > sizeof(transmit_packet) ||
+        (payload_length != 0u && payload == 0)) {
+        return 0;
+    }
+    write_ethernet_header(transmit_packet, destination_mac, ETHERNET_IPV4);
+    uint8_t *ip = write_ipv4_header(transmit_packet, destination_ip, 6u,
+                                    tcp_length);
+    uint8_t *tcp = ip + IPV4_HEADER_SIZE;
+    write_be16(tcp, source_port);
+    write_be16(tcp + 2u, destination_port);
+    write_be32(tcp + 4u, sequence);
+    write_be32(tcp + 8u, acknowledgment);
+    tcp[12] = 0x50u;
+    tcp[13] = flags;
+    write_be16(tcp + 14u, 4096u);
+    tcp[16] = 0u;
+    tcp[17] = 0u;
+    tcp[18] = 0u;
+    tcp[19] = 0u;
+    if (payload_length != 0u) {
+        copy_bytes(tcp + 20u, payload, payload_length);
+    }
+    write_be16(tcp + 16u, tcp_checksum(tcp, tcp_length, destination_ip));
+    if (frame_length < 60u) {
+        for (uint32_t index = frame_length; index < 60u; ++index) {
+            transmit_packet[index] = 0u;
+        }
+        frame_length = 60u;
+    }
+    return rtl8139_send(transmit_packet, (uint16_t)frame_length);
+}
+
+static int parse_tcp_segment(const uint8_t *frame, uint16_t frame_length,
+                             const uint8_t source_ip[4],
+                             uint16_t source_port, uint16_t local_port,
+                             struct tcp_segment *segment)
+{
+    if (frame_length < ETHERNET_HEADER_SIZE + IPV4_HEADER_SIZE + 20u ||
+        read_be16(frame + 12u) != ETHERNET_IPV4) {
+        return 0;
+    }
+    const uint8_t *ip = frame + ETHERNET_HEADER_SIZE;
+    uint32_t ip_header_length = (uint32_t)(ip[0] & 0x0fu) * 4u;
+    uint16_t ip_length = read_be16(ip + 2u);
+    if ((ip[0] >> 4) != 4u || ip_header_length < IPV4_HEADER_SIZE ||
+        ip_length < ip_header_length + 20u ||
+        ip_length > frame_length - ETHERNET_HEADER_SIZE ||
+        ip[9] != 6u ||
+        !bytes_equal(ip + 12u, source_ip, 4u) ||
+        !bytes_equal(ip + 16u, configuration.address, 4u)) {
+        return 0;
+    }
+    const uint8_t *tcp = ip + ip_header_length;
+    uint32_t tcp_header_length = (uint32_t)(tcp[12] >> 4) * 4u;
+    if (tcp_header_length < 20u ||
+        tcp_header_length > ip_length - ip_header_length ||
+        read_be16(tcp) != source_port ||
+        read_be16(tcp + 2u) != local_port) {
+        return 0;
+    }
+    segment->sequence = read_be32(tcp + 4u);
+    segment->acknowledgment = read_be32(tcp + 8u);
+    segment->flags = tcp[13];
+    segment->payload = tcp + tcp_header_length;
+    segment->payload_length =
+        (uint16_t)(ip_length - ip_header_length - tcp_header_length);
+    return 1;
+}
+
 static int send_icmp_echo(const uint8_t destination_mac[6],
                           const uint8_t destination_ip[4],
                           uint16_t sequence)
@@ -478,17 +637,7 @@ int network_ping(const uint8_t address[4], uint32_t *round_trip_ms)
     }
 
     uint8_t destination_mac[6];
-    uint8_t next_hop[4];
-    int same_subnet = 1;
-    for (uint32_t index = 0u; index < 4u; ++index) {
-        if ((address[index] & configuration.subnet_mask[index]) !=
-            (configuration.address[index] & configuration.subnet_mask[index])) {
-            same_subnet = 0;
-        }
-    }
-    copy_bytes(next_hop, same_subnet ? address : configuration.gateway, 4u);
-    if (!send_arp_request(next_hop) ||
-        !wait_for_arp(next_hop, destination_mac) ||
+    if (!resolve_ipv4_mac(address, destination_mac) ||
         !send_icmp_echo(destination_mac, address, 1u)) {
         return 0;
     }
@@ -507,6 +656,144 @@ int network_ping(const uint8_t address[4], uint32_t *round_trip_ms)
         }
         __asm__ volatile ("hlt");
     }
+    return 0;
+}
+
+int network_http_get(const uint8_t address[4], uint16_t port,
+                     const char *path, char *response,
+                     uint32_t capacity, uint32_t *response_length)
+{
+    if (network_available == 0u || configuration.configured == 0u ||
+        address == 0 || path == 0 || response == 0 || capacity < 2u ||
+        response_length == 0 || *path != '/') {
+        return 0;
+    }
+    for (uint32_t index = 0u; path[index] != '\0'; ++index) {
+        if (path[index] < ' ' || path[index] == '\r' || path[index] == '\n') {
+            return 0;
+        }
+    }
+
+    uint8_t destination_mac[6];
+    if (!resolve_ipv4_mac(address, destination_mac)) {
+        return 0;
+    }
+
+    char request[192];
+    uint32_t request_length = 0u;
+    if (!append_text(request, sizeof(request), &request_length, "GET ") ||
+        !append_text(request, sizeof(request), &request_length, path) ||
+        !append_text(request, sizeof(request), &request_length,
+                     " HTTP/1.0\r\nHost: ")) {
+        return 0;
+    }
+    for (uint32_t index = 0u; index < 4u; ++index) {
+        if ((index != 0u &&
+             !append_text(request, sizeof(request), &request_length, ".")) ||
+            !append_decimal(request, sizeof(request), &request_length,
+                            address[index])) {
+            return 0;
+        }
+    }
+    if (port != 80u) {
+        if (!append_text(request, sizeof(request), &request_length, ":") ||
+            !append_decimal(request, sizeof(request), &request_length,
+                            port)) {
+            return 0;
+        }
+    }
+    if (!append_text(request, sizeof(request), &request_length,
+                     "\r\nConnection: close\r\n\r\n")) {
+        return 0;
+    }
+
+    uint16_t local_port = (uint16_t)(49152u + pit_ticks_read() % 16384u);
+    uint32_t local_sequence = pit_ticks_read() ^ DHCP_TRANSACTION_ID;
+    if (!send_tcp_segment(destination_mac, address, local_port, port,
+                          local_sequence, 0u, 0x02u, 0, 0u)) {
+        return 0;
+    }
+
+    uint32_t remote_sequence = 0u;
+    uint32_t start = pit_ticks_read();
+    int connected = 0;
+    while ((uint32_t)(pit_ticks_read() - start) < TCP_TIMEOUT_TICKS) {
+        uint16_t frame_length;
+        struct tcp_segment segment;
+        if (rtl8139_receive(receive_packet, sizeof(receive_packet),
+                            &frame_length) &&
+            parse_tcp_segment(receive_packet, frame_length, address, port,
+                              local_port, &segment)) {
+            if ((segment.flags & 0x04u) != 0u) {
+                return 0;
+            }
+            if ((segment.flags & 0x12u) == 0x12u &&
+                segment.acknowledgment == local_sequence + 1u) {
+                remote_sequence = segment.sequence + 1u;
+                ++local_sequence;
+                connected = send_tcp_segment(
+                    destination_mac, address, local_port, port,
+                    local_sequence, remote_sequence, 0x10u, 0, 0u);
+                break;
+            }
+        }
+        __asm__ volatile ("hlt");
+    }
+    if (!connected) {
+        return 0;
+    }
+
+    if (!send_tcp_segment(destination_mac, address, local_port, port,
+                          local_sequence, remote_sequence, 0x18u,
+                          (const uint8_t *)request,
+                          (uint16_t)request_length)) {
+        return 0;
+    }
+    local_sequence += request_length;
+
+    uint32_t stored_length = 0u;
+    start = pit_ticks_read();
+    while ((uint32_t)(pit_ticks_read() - start) < TCP_TIMEOUT_TICKS) {
+        uint16_t frame_length;
+        struct tcp_segment segment;
+        if (rtl8139_receive(receive_packet, sizeof(receive_packet),
+                            &frame_length) &&
+            parse_tcp_segment(receive_packet, frame_length, address, port,
+                              local_port, &segment)) {
+            if ((segment.flags & 0x04u) != 0u) {
+                break;
+            }
+            if (segment.payload_length != 0u &&
+                segment.sequence == remote_sequence) {
+                for (uint32_t index = 0u; index < segment.payload_length;
+                     ++index) {
+                    if (stored_length + 1u < capacity) {
+                        response[stored_length++] =
+                            (char)segment.payload[index];
+                    }
+                }
+                remote_sequence += segment.payload_length;
+            }
+            if ((segment.flags & 0x01u) != 0u &&
+                segment.sequence + segment.payload_length == remote_sequence) {
+                ++remote_sequence;
+                (void)send_tcp_segment(destination_mac, address, local_port,
+                                       port, local_sequence, remote_sequence,
+                                       0x10u, 0, 0u);
+                response[stored_length] = '\0';
+                *response_length = stored_length;
+                return stored_length != 0u;
+            }
+            if (segment.payload_length != 0u) {
+                (void)send_tcp_segment(destination_mac, address, local_port,
+                                       port, local_sequence, remote_sequence,
+                                       0x10u, 0, 0u);
+            }
+        }
+        __asm__ volatile ("hlt");
+    }
+    response[stored_length] = '\0';
+    *response_length = stored_length;
     return 0;
 }
 

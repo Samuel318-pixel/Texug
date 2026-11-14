@@ -232,6 +232,6 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     console_write("Threads: ");
     console_write_u32(completed_threads);
     console_write(" cooperative tasks completed\n");
-    console_write("Kernel stages 6-9 active (partial).\n");
+    console_write("Kernel stages 6-10 active (partial).\n");
     shell_run();
 }
