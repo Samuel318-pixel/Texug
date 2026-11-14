@@ -12,9 +12,11 @@
 #define PACKET_CAPACITY 1600u
 #define DHCP_TIMEOUT_TICKS 150u
 #define PING_TIMEOUT_TICKS 200u
+#define DNS_TIMEOUT_TICKS 300u
 #define TCP_TIMEOUT_TICKS 500u
 #define DHCP_TRANSACTION_ID 0x54584731u
 #define ICMP_IDENTIFIER 0x5447u
+#define DNS_QUERY_CAPACITY 512u
 
 #define ETHERNET_IPV4 0x0800u
 #define ETHERNET_ARP 0x0806u
@@ -34,8 +36,10 @@ static struct network_config configuration;
 static uint8_t hardware_address[6];
 static uint8_t transmit_packet[PACKET_CAPACITY];
 static uint8_t dhcp_payload[DHCP_MAX_SIZE];
+static uint8_t dns_payload[DNS_QUERY_CAPACITY];
 static uint8_t receive_packet[PACKET_CAPACITY];
 static uint16_t ipv4_identifier;
+static uint16_t dns_identifier;
 static uint8_t network_available;
 static const char *dhcp_error;
 
@@ -627,6 +631,172 @@ int network_dhcp(void)
 const char *network_dhcp_error(void)
 {
     return dhcp_error == 0 ? "unspecified DHCP error" : dhcp_error;
+}
+
+static int dns_skip_name(const uint8_t *message, uint16_t length,
+                         uint32_t *offset)
+{
+    uint32_t cursor = *offset;
+    uint32_t resume = 0u;
+    uint8_t jumped = 0u;
+    uint32_t steps = 0u;
+    while (cursor < length && ++steps <= length) {
+        uint8_t label = message[cursor++];
+        if (label == 0u) {
+            *offset = jumped != 0u ? resume : cursor;
+            return 1;
+        }
+        if ((label & 0xc0u) == 0xc0u) {
+            if (cursor >= length) {
+                return 0;
+            }
+            uint32_t target =
+                ((uint32_t)(label & 0x3fu) << 8) | message[cursor++];
+            if (target >= length) {
+                return 0;
+            }
+            if (jumped == 0u) {
+                resume = cursor;
+                jumped = 1u;
+            }
+            cursor = target;
+            continue;
+        }
+        if ((label & 0xc0u) != 0u || cursor + label > length) {
+            return 0;
+        }
+        cursor += label;
+    }
+    return 0;
+}
+
+static int parse_dns_response(const uint8_t *message, uint16_t length,
+                              uint16_t identifier, uint8_t address[4])
+{
+    if (length < 12u || read_be16(message) != identifier) {
+        return 0;
+    }
+    uint16_t flags = read_be16(message + 2u);
+    uint16_t questions = read_be16(message + 4u);
+    uint16_t answers = read_be16(message + 6u);
+    if ((flags & 0x8000u) == 0u || (flags & 0x7800u) != 0u ||
+        (flags & 0x000fu) != 0u || answers == 0u || questions == 0u) {
+        return 0;
+    }
+
+    uint32_t offset = 12u;
+    for (uint32_t index = 0u; index < questions; ++index) {
+        if (!dns_skip_name(message, length, &offset) ||
+            offset + 4u > length) {
+            return 0;
+        }
+        offset += 4u;
+    }
+    for (uint32_t index = 0u; index < answers; ++index) {
+        if (!dns_skip_name(message, length, &offset) ||
+            offset + 10u > length) {
+            return 0;
+        }
+        uint16_t type = read_be16(message + offset);
+        uint16_t record_class = read_be16(message + offset + 2u);
+        uint16_t record_length = read_be16(message + offset + 8u);
+        offset += 10u;
+        if (offset + record_length > length) {
+            return 0;
+        }
+        if (type == 1u && record_class == 1u && record_length == 4u) {
+            copy_bytes(address, message + offset, 4u);
+            return 1;
+        }
+        offset += record_length;
+    }
+    return 0;
+}
+
+int network_resolve_ipv4(const char *hostname, uint8_t address[4])
+{
+    if (network_available == 0u || configuration.configured == 0u ||
+        hostname == 0 || address == 0 ||
+        (configuration.dns_server[0] | configuration.dns_server[1] |
+         configuration.dns_server[2] | configuration.dns_server[3]) == 0u) {
+        return 0;
+    }
+
+    uint16_t query_length = 12u;
+    uint32_t label_length = 0u;
+    uint32_t name_length = 0u;
+    uint32_t label_position = query_length++;
+    for (uint32_t index = 0u; ; ++index) {
+        char character = hostname[index];
+        if (character == '.' || character == '\0') {
+            if (label_length == 0u || label_length > 63u) {
+                return 0;
+            }
+            dns_payload[label_position] = (uint8_t)label_length;
+            name_length += label_length + 1u;
+            label_length = 0u;
+            if (character == '\0' ||
+                (character == '.' && hostname[index + 1u] == '\0')) {
+                if (name_length + 1u > 255u ||
+                    query_length + 5u > sizeof(dns_payload)) {
+                    return 0;
+                }
+                dns_payload[query_length++] = 0u;
+                break;
+            }
+            label_position = query_length++;
+            continue;
+        }
+        if (character < '!' || character > '~' || label_length >= 63u ||
+            name_length + label_length + 3u > 255u ||
+            query_length + 6u > sizeof(dns_payload)) {
+            return 0;
+        }
+        dns_payload[query_length++] = (uint8_t)character;
+        ++label_length;
+    }
+
+    uint16_t identifier = ++dns_identifier;
+    write_be16(dns_payload, identifier);
+    write_be16(dns_payload + 2u, 0x0100u);
+    write_be16(dns_payload + 4u, 1u);
+    write_be16(dns_payload + 6u, 0u);
+    write_be16(dns_payload + 8u, 0u);
+    write_be16(dns_payload + 10u, 0u);
+    write_be16(dns_payload + query_length, 1u);
+    write_be16(dns_payload + query_length + 2u, 1u);
+    query_length = (uint16_t)(query_length + 4u);
+
+    uint8_t destination_mac[6];
+    if (!resolve_ipv4_mac(configuration.dns_server, destination_mac)) {
+        return 0;
+    }
+    uint16_t local_port = (uint16_t)(53000u + identifier % 2000u);
+    if (!send_udp(destination_mac, configuration.dns_server, local_port, 53u,
+                  dns_payload, query_length)) {
+        return 0;
+    }
+
+    uint32_t start = pit_ticks_read();
+    while ((uint32_t)(pit_ticks_read() - start) < DNS_TIMEOUT_TICKS) {
+        uint16_t frame_length;
+        const uint8_t *ip;
+        const uint8_t *udp;
+        const uint8_t *payload;
+        uint16_t payload_length;
+        if (rtl8139_receive(receive_packet, sizeof(receive_packet),
+                            &frame_length) &&
+            parse_ipv4_udp(receive_packet, frame_length, &ip, &udp, &payload,
+                           &payload_length) &&
+            read_be16(udp) == 53u && read_be16(udp + 2u) == local_port &&
+            bytes_equal(ip + 12u, configuration.dns_server, 4u) &&
+            bytes_equal(ip + 16u, configuration.address, 4u) &&
+            parse_dns_response(payload, payload_length, identifier, address)) {
+            return 1;
+        }
+        __asm__ volatile ("hlt");
+    }
+    return 0;
 }
 
 int network_ping(const uint8_t address[4], uint32_t *round_trip_ms)

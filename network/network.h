@@ -15,6 +15,7 @@ int network_initialize(void);
 int network_is_available(void);
 int network_dhcp(void);
 const char *network_dhcp_error(void);
+int network_resolve_ipv4(const char *hostname, uint8_t address[4]);
 int network_ping(const uint8_t address[4], uint32_t *round_trip_ms);
 int network_http_get(const uint8_t address[4], uint16_t port,
                      const char *path, char *response,

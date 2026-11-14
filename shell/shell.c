@@ -118,7 +118,7 @@ static void print_help(void)
 {
     console_write("Commands: help clear echo ls cd mkdir touch cat rm\n");
     console_write("          reboot shutdown memory version processes mouse devices\n");
-    console_write("          desktop net dhcp ping\n");
+    console_write("          desktop net dhcp dns ping\n");
 }
 
 static void list_directory(void)
@@ -474,6 +474,19 @@ static void execute_command(char *line)
         } else {
             console_write("Request timed out from ");
             print_ipv4_address(address);
+            console_write(".\n");
+        }
+    } else if (string_equal(command, "dns")) {
+        uint8_t address[4];
+        if (*arguments == '\0') {
+            console_write("Usage: dns HOSTNAME\n");
+        } else if (network_resolve_ipv4(arguments, address)) {
+            console_write("DNS reply: ");
+            print_ipv4_address(address);
+            console_write("\n");
+        } else {
+            console_write("DNS lookup failed for ");
+            console_write(arguments);
             console_write(".\n");
         }
     } else {

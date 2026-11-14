@@ -46,6 +46,7 @@ It also verifies the 320×200 VGA desktop, opens and closes a window using the
 mouse, exercises the graphical terminal and FAT32 file browser, checks the
 system-information app, starts the native raycasting arena, tests its shooting
 and mouse-aim controls, obtains a DHCP lease, pings the QEMU network gateway,
+resolves `localhost` through the DHCP-provided DNS server,
 loads a page from a local HTTP test server through QEMU networking, and
 confirms that Escape restores text mode.
 The kernel also creates a directory and a 700-byte file, verifies its contents,
@@ -66,18 +67,19 @@ are claimed or included.
   kernel-integrated Files, Terminal, and System Information apps; the terminal
   supports basic FAT32 and system commands. Networking has a polled RTL8139
   driver, DHCP configuration, ARP, IPv4 ICMP echo, and `net`, `dhcp`, and
-  `ping` shell commands. A text browser can fetch HTTP/1.0 pages from IPv4
+  `dns` A-record lookup and `ping` shell commands. A text browser can fetch
+  HTTP/1.0 pages from IPv4
   addresses over a minimal TCP client. The desktop also has a native, single-
   arena raycasting game with movement, mouse aiming, shooting, health, ammo,
   enemies, and wall collision.
-- Partial: The game has two compact arena layouts, but the QEMU regression
-  covers play controls in the first one; enemies are static and there is no
-  sound.
-  Stage 6 device support and all networking have only been exercised with
-  QEMU-emulated hardware. Desktop apps and the game run inside the kernel;
-  user-mode application processes and isolation are not implemented. Network
-  support currently has no DNS, HTTPS, JavaScript, or general-purpose TCP
-  sockets and has only been tested with QEMU user-mode networking.
+- Partial: DNS currently resolves IPv4 A records only. The game has two
+  compact arena layouts, but the QEMU regression covers play controls in the
+  first one; enemies are static and there is no sound. Stage 6 device support
+  and all networking have only been exercised with QEMU-emulated hardware.
+  Desktop apps and the game run inside the kernel; user-mode application
+  processes and isolation are not implemented. Networking has no TLS/HTTPS,
+  JavaScript, or general-purpose TCP sockets and has only been tested with
+  QEMU user-mode networking.
 - Not yet implemented: preemptive scheduling, AHCI/SATA hardware verification,
   long filenames, a full-featured browser, or user-mode applications.
 - The QEMU smoke test confirms boot in emulation; physical hardware has not

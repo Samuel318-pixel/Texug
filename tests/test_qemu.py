@@ -408,7 +408,10 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("Returned from TexugOS Desktop.", screen)
 
     def test_shell_commands_and_fat32_navigation(self):
-        self._run_shell_command("help", "Commands: help clear echo ls cd mkdir touch cat rm")
+        help_screen = self._run_shell_command(
+            "help", "Commands: help clear echo ls cd mkdir touch cat rm"
+        )
+        self.assertIn("desktop net dhcp dns ping", help_screen)
         self._send_mouse_move(25, 15)
         mouse_screen = self._run_shell_command("mouse", "Mouse packets:")
         mouse_packets = int(
@@ -425,6 +428,9 @@ class QemuBootTests(unittest.TestCase):
         self._run_shell_command("dhcp", "DHCP lease acquired.")
         network = self._run_shell_command("net", "IPv4: 10.0.2.15")
         self.assertIn("Gateway: 10.0.2.2", network)
+        self._run_shell_command("dns localhost", "DNS reply: 127.0.0.1")
+        self._run_shell_command("dns localhost.", "DNS reply: 127.0.0.1")
+        self._run_shell_command("dns invalid..name", "DNS lookup failed")
         self._run_shell_command("ping 10.0.2.2", "Reply from 10.0.2.2")
         self._run_shell_command("echo ready", "ready")
         self._run_shell_command("mkdir test", "Directory created.")
