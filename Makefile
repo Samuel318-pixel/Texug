@@ -54,6 +54,9 @@ $(BUILD)/pit.o: drivers/pit.c | $(BUILD)
 $(BUILD)/keyboard.o: drivers/keyboard.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
+$(BUILD)/mouse.o: drivers/mouse.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
 $(BUILD)/ata.o: drivers/ata.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
@@ -73,8 +76,8 @@ $(BUILD)/payload.elf: $(BUILD)/stage2.o $(BUILD)/interrupt_stubs.o \
 		$(BUILD)/context_switch.o $(BUILD)/kernel.o $(BUILD)/console.o \
 		$(BUILD)/interrupts.o $(BUILD)/threads.o $(BUILD)/paging.o \
 		$(BUILD)/frame_allocator.o $(BUILD)/heap.o \
-		$(BUILD)/pic.o $(BUILD)/pit.o $(BUILD)/keyboard.o $(BUILD)/ata.o \
-		$(BUILD)/fat32.o $(BUILD)/shell.o \
+		$(BUILD)/pic.o $(BUILD)/pit.o $(BUILD)/keyboard.o $(BUILD)/mouse.o \
+		$(BUILD)/ata.o $(BUILD)/fat32.o $(BUILD)/shell.o \
 		boot/payload.ld
 	$(LD) $(LDFLAGS) -T boot/payload.ld -o $@ $(filter %.o,$^)
 

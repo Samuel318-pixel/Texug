@@ -126,6 +126,21 @@ class QemuBootTests(unittest.TestCase):
                     },
                 }
             )
+            time.sleep(0.01)
+
+    @classmethod
+    def _send_mouse_move(cls, x, y):
+        cls._execute_qmp(
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [
+                        {"type": "rel", "data": {"axis": "x", "value": x}},
+                        {"type": "rel", "data": {"axis": "y", "value": y}},
+                    ]
+                },
+            }
+        )
 
     def _run_shell_command(self, command, expected_output):
         self._send_command(command)
@@ -134,8 +149,22 @@ class QemuBootTests(unittest.TestCase):
         while time.monotonic() < deadline:
             screen = self._read_screen()
             command_position = screen.rfind(command)
-            next_prompt = screen.find("texugos:", command_position + len(command))
-            if expected_output in screen and command_position >= 0 and next_prompt >= 0:
+            while command_position >= 0:
+                prompt_before = screen.rfind("texugos:", 0, command_position)
+                if prompt_before // 80 == command_position // 80:
+                    break
+                command_position = screen.rfind(command, 0, command_position)
+            if command_position >= 0:
+                last_command_character = command_position + len(command) - 1
+                output_start = (last_command_character // 80 + 1) * 80
+                next_prompt = screen.find("texugos:", output_start)
+            else:
+                output_start = len(screen)
+                next_prompt = -1
+            if (
+                expected_output in screen[output_start:]
+                and next_prompt >= 0
+            ):
                 return screen
             time.sleep(0.05)
         self.fail(
@@ -169,15 +198,24 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("ATA: QEMU HARDDISK", self.screen)
         self.assertIn("FAT32: mount and CRUD test passed", self.screen)
         self.assertIn("Keyboard: PS/2 input enabled", self.screen)
+        self.assertIn("Mouse: PS/2 initialized", self.screen)
         self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
         self.assertIn("PIC: remapped; PIT: 100 Hz", self.screen)
         self.assertIn("Threads: 2 cooperative tasks completed", self.screen)
-        self.assertIn("Kernel stage 5 active.", self.screen)
+        self.assertIn("Kernel stage 6 active (partial).", self.screen)
         self.assertIn("TexugOS shell ready.", self.screen)
         self.assertRegex(self.screen, r"PIT ticks: [1-9][0-9]*")
 
     def test_shell_commands_and_fat32_navigation(self):
         self._run_shell_command("help", "Commands: help clear echo ls cd mkdir touch cat rm")
+        self._send_mouse_move(25, 15)
+        mouse_screen = self._run_shell_command("mouse", "Mouse packets:")
+        mouse_packets = int(
+            mouse_screen.split("Mouse packets: ", 1)[1].split()[0]
+        )
+        self.assertGreater(mouse_packets, 0)
+        position = mouse_screen.split(" position ", 1)[1].split(" buttons", 1)[0]
+        self.assertNotEqual(position, "320,100")
         self._run_shell_command("version", "TexugOS version 0.1.0")
         self._run_shell_command("echo ready", "ready")
         self._run_shell_command("mkdir test", "Directory created.")

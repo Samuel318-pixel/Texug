@@ -4,6 +4,7 @@
 #include "fat32.h"
 #include "frame_allocator.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "shell.h"
 
 #define COMMAND_BUFFER_SIZE 128u
@@ -113,7 +114,7 @@ static int parse_command(char *line, char command[COMMAND_NAME_SIZE],
 static void print_help(void)
 {
     console_write("Commands: help clear echo ls cd mkdir touch cat rm\n");
-    console_write("          reboot shutdown memory version processes\n");
+    console_write("          reboot shutdown memory version processes mouse\n");
 }
 
 static void list_directory(void)
@@ -316,6 +317,18 @@ static void execute_command(char *line)
     } else if (string_equal(command, "processes")) {
         console_write("User processes: 0 (process isolation not implemented).\n");
         console_write("Kernel threads use a cooperative scheduler.\n");
+    } else if (string_equal(command, "mouse")) {
+        struct mouse_state state;
+        mouse_get_state(&state);
+        console_write("Mouse packets: ");
+        console_write_u32(state.packets);
+        console_write(" position ");
+        console_write_u32(state.x);
+        console_write(",");
+        console_write_u32(state.y);
+        console_write(" buttons ");
+        console_write_u32(state.buttons);
+        console_write("\n");
     } else {
         console_write("Unknown command. Type 'help'.\n");
     }

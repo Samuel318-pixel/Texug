@@ -12,6 +12,7 @@
 #include "fat32.h"
 #include "keyboard.h"
 #include "shell.h"
+#include "mouse.h"
 
 #define E820_BUFFER ((volatile const struct e820_entry *)0x5000u)
 #define E820_MAX_ENTRIES 32u
@@ -207,9 +208,12 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     pic_initialize();
     pit_initialize(100u);
     keyboard_initialize();
+    int mouse_available = mouse_initialize();
     console_write("IDT: exceptions and IRQ vectors installed\n");
     console_write("PIC: remapped; PIT: 100 Hz\n");
     console_write("Keyboard: PS/2 input enabled\n");
+    console_write(mouse_available ? "Mouse: PS/2 initialized\n"
+                                  : "Mouse: PS/2 unavailable\n");
 
     __asm__ volatile ("sti");
     uint32_t initial_ticks = pit_ticks_read();
@@ -233,6 +237,6 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     console_write("Threads: ");
     console_write_u32(completed_threads);
     console_write(" cooperative tasks completed\n");
-    console_write("Kernel stage 5 active.\n");
+    console_write("Kernel stage 6 active (partial).\n");
     shell_run();
 }
