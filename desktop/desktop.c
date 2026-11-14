@@ -1,5 +1,6 @@
 #include <stdint.h>
 
+#include "apps.h"
 #include "console.h"
 #include "desktop.h"
 #include "keyboard.h"
@@ -141,11 +142,7 @@ static void draw_window(uint32_t index)
     video_draw_text(x + (int32_t)width - 11, y + 5, "X", 15u);
 
     video_fill_rect(x + 3, y + 17, width - 6u, height - 20u, 15u);
-    video_draw_text(x + 10, y + 26, "APP NOT INSTALLED", 1u);
-    video_draw_text(x + 10, y + 39, "NATIVE APPS ARE", 1u);
-    video_draw_text(x + 10, y + 50, "PLANNED FOR", 1u);
-    video_draw_text(x + 10, y + 61, "STAGE 8", 1u);
-    video_draw_text(x + 10, y + 76, "ESC CLOSES DESKTOP", 8u);
+    desktop_app_draw(index, x + 3, y + 17, width - 6u, height - 20u);
     video_fill_rect(x + (int32_t)width - 8,
                     y + (int32_t)height - 8, 4u, 4u, 8u);
 }
@@ -274,6 +271,8 @@ static void handle_click(uint32_t x, uint32_t y)
             dragging = DRAG_RESIZE;
             drag_offset_x = (int32_t)x;
             drag_offset_y = (int32_t)y;
+        } else {
+            desktop_app_handle_click(index, local_x, local_y);
         }
         return;
     }
@@ -321,6 +320,7 @@ void desktop_run(void)
     active_window = -1;
     menu_open = 0u;
     dragging = DRAG_NONE;
+    desktop_apps_initialize();
     if (!video_set_graphics_mode()) {
         console_write("Unable to set VGA graphics mode.\n");
         return;
@@ -347,7 +347,11 @@ void desktop_run(void)
                 console_write("Returned from TexugOS Desktop.\n");
                 return;
             }
-            if (key == '1') {
+            if (active_window >= 0 &&
+                windows[(uint32_t)active_window].open &&
+                !windows[(uint32_t)active_window].minimized) {
+                desktop_app_handle_key((uint32_t)active_window, key);
+            } else if (key == '1') {
                 open_window(0u);
             } else if (key == '2') {
                 open_window(1u);

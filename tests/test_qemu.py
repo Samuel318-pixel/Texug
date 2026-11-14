@@ -211,6 +211,13 @@ class QemuBootTests(unittest.TestCase):
             return b""
         return cls.framebuffer_path.read_bytes()
 
+    @staticmethod
+    def _framebuffer_region(framebuffer, x, y, width, height):
+        return b"".join(
+            framebuffer[row * 320 + x : row * 320 + x + width]
+            for row in range(y, y + height)
+        )
+
     def _run_shell_command(self, command, expected_output):
         self._send_command(command)
         deadline = time.monotonic() + 3
@@ -361,6 +368,21 @@ class QemuBootTests(unittest.TestCase):
             f"window-region pixels: {window_pixels}",
         )
 
+        terminal_before = self._framebuffer_region(framebuffer, 80, 52, 184, 100)
+        self._send_command("echo ready")
+        deadline = time.monotonic() + 3
+        terminal_after = terminal_before
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            terminal_after = self._framebuffer_region(
+                framebuffer, 80, 52, 184, 100
+            )
+            if terminal_after != terminal_before:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(terminal_after, terminal_before)
+        self._send_command("touch appfile")
+
         self._move_mouse_to(50, 75, 520, 40)
         self._click_mouse()
         deadline = time.monotonic() + 3
@@ -372,6 +394,47 @@ class QemuBootTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertEqual(framebuffer[sample], wallpaper_pixel)
 
+        self._move_mouse_to(520, 40, 50, 50)
+        self._click_mouse()
+        deadline = time.monotonic() + 3
+        framebuffer = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[sample] == 15:
+                break
+            time.sleep(0.05)
+        self.assertEqual(framebuffer[sample], 15)
+        files_before = self._framebuffer_region(framebuffer, 75, 45, 190, 110)
+        self._send_key("ret")
+        deadline = time.monotonic() + 3
+        files_after = files_before
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            files_after = self._framebuffer_region(
+                framebuffer, 75, 45, 190, 110
+            )
+            if files_after != files_before:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(files_after, files_before)
+
+        self._move_mouse_to(50, 50, 520, 40)
+        self._click_mouse()
+        self._move_mouse_to(520, 40, 50, 125)
+        self._click_mouse()
+        deadline = time.monotonic() + 3
+        framebuffer = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            settings_text_pixels = sum(
+                framebuffer[row * 320 + column] == 1
+                for row in range(64, 71)
+                for column in range(96, 205)
+            ) if len(framebuffer) == GRAPHICS_BYTES else 0
+            if settings_text_pixels > 20:
+                break
+            time.sleep(0.05)
+        self.assertGreater(settings_text_pixels, 20)
         self._send_key("esc")
         deadline = time.monotonic() + 3
         screen = ""

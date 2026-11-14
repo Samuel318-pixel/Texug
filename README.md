@@ -1,10 +1,10 @@
 # TexugOS
 
 TexugOS is an experimental x86 operating system being developed in stages. Its
-current milestones cover the Legacy BIOS boot path, storage, shell, and basic
-emulated input.
+current milestones cover the Legacy BIOS boot path, storage, shell, emulated
+input, and a basic graphical desktop.
 
-## Implemented: Stages 1-5; Stages 6-7 (partial)
+## Implemented: Stages 1-5; Stages 6-8 (partial)
 
 The boot image contains a 512-byte boot sector followed by a fixed 64-sector
 payload and a FAT32 partition. The boot sector checks BIOS LBA-extension
@@ -43,7 +43,8 @@ partition layout, and runs a headless QEMU test. It checks the kernel's boot
 status and sends keyboard and mouse input to exercise shell commands, PCI
 device listing, FAT32 directory navigation, and PS/2 mouse packet handling.
 It also verifies the 320×200 VGA desktop, opens and closes a window using the
-mouse, and confirms that Escape restores text mode.
+mouse, exercises the graphical terminal and FAT32 file browser, checks the
+system-information app, and confirms that Escape restores text mode.
 The kernel also creates a directory and a 700-byte file, verifies its contents,
 then removes both.
 `make run` starts QEMU with the raw disk image.
@@ -58,12 +59,14 @@ are claimed or included.
   cooperative kernel threads, ATA PIO, FAT32 file/directory operations, a
   PCI enumeration, PS/2 keyboard-driven shell and mouse input, and a
   320×200 VGA desktop with clickable icons, a taskbar, pointer, and
-  movable/resizable/minimizable/maximizable windows.
+  movable/resizable/minimizable/maximizable windows. The desktop includes
+  kernel-integrated Files, Terminal, and System Information apps; the terminal
+  supports basic FAT32 and system commands.
 - Partial: Stage 6 device support has only been exercised with QEMU-emulated
-  hardware. Stage 7 provides a graphical shell/window manager, but its windows
-  are placeholders; native applications are not implemented.
-- Not yet implemented: user-mode process isolation, preemptive scheduling,
-  AHCI/SATA hardware verification, long filenames, networking, or apps.
+  hardware. The desktop apps run inside the kernel; user-mode application
+  processes and isolation are not implemented.
+- Not yet implemented: preemptive scheduling, AHCI/SATA hardware verification,
+  long filenames, networking, or user-mode applications.
 - The QEMU smoke test confirms boot in emulation; physical hardware has not
   been tested.
 - The ATA device is QEMU's emulated disk; physical HP G42-215BR hardware is
