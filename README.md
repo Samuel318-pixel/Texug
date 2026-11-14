@@ -47,7 +47,8 @@ mouse, exercises the graphical terminal and FAT32 file browser, checks the
 system-information app, starts the native raycasting arena, tests its shooting
 and mouse-aim controls, obtains a DHCP lease, pings the QEMU network gateway,
 resolves `localhost` through the DHCP-provided DNS server,
-loads a page from a local HTTP test server through QEMU networking, and
+loads a page from a local HTTP test server through QEMU networking using a
+formatted HTTP URL, and
 confirms that Escape restores text mode.
 The kernel also creates a directory and a 700-byte file, verifies its contents,
 then removes both.
@@ -68,10 +69,10 @@ are claimed or included.
   supports basic FAT32 and system commands. Networking has a polled RTL8139
   driver, DHCP configuration, ARP, IPv4 ICMP echo, and `net`, `dhcp`, and
   `dns` A-record lookup and `ping` shell commands. A text browser can fetch
-  HTTP/1.0 pages from IPv4
-  addresses over a minimal TCP client. The desktop also has a native, single-
-  arena raycasting game with movement, mouse aiming, shooting, health, ammo,
-  enemies, and wall collision.
+  HTTP/1.0 pages using IPv4 addresses or DNS names over a minimal TCP client.
+  HTTPS is not supported. The desktop also has a native, two-level raycasting
+  game with movement, mouse aiming, shooting, health, ammo, enemies, and wall
+  collision.
 - Partial: DNS currently resolves IPv4 A records only. The game has two
   compact arena layouts, but the QEMU regression covers play controls in the
   first one; enemies are static and there is no sound. Stage 6 device support

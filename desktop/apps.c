@@ -41,6 +41,7 @@ static uint32_t browser_input_length;
 static char browser_lines[BROWSER_LINE_COUNT][BROWSER_LINE_SIZE];
 static uint32_t browser_line_count;
 static char browser_status[BROWSER_LINE_SIZE];
+static uint8_t browser_status_color;
 
 static uint32_t text_length(const char *text)
 {
@@ -234,30 +235,30 @@ static void terminal_execute(void)
     terminal_input[0] = '\0';
 }
 
-static int parse_browser_target(const char *text, uint8_t address[4],
+static int parse_browser_target(const char *text, char host[64],
                                 uint16_t *port, char path[96])
 {
     const char *cursor = text;
-    for (uint32_t part = 0u; part < 4u; ++part) {
-        uint32_t value = 0u;
-        uint32_t digits = 0u;
-        while (*cursor >= '0' && *cursor <= '9') {
-            value = value * 10u + (uint32_t)(*cursor++ - '0');
-            if (value > 255u || ++digits > 3u) {
-                return 0;
-            }
-        }
-        if (digits == 0u) {
+    static const char http_prefix[] = "http://";
+    if (text_starts_with(cursor, http_prefix)) {
+        cursor += sizeof(http_prefix) - 1u;
+    }
+    uint32_t host_length = 0u;
+    while (*cursor != '\0' && *cursor != ':' && *cursor != '/') {
+        char character = *cursor++;
+        if (!((character >= 'a' && character <= 'z') ||
+              (character >= 'A' && character <= 'Z') ||
+              (character >= '0' && character <= '9') ||
+              character == '.' || character == '-') ||
+            host_length + 1u >= 64u) {
             return 0;
         }
-        address[part] = (uint8_t)value;
-        if (part < 3u) {
-            if (*cursor != '.') {
-                return 0;
-            }
-            ++cursor;
-        }
+        host[host_length++] = character;
     }
+    if (host_length == 0u) {
+        return 0;
+    }
+    host[host_length] = '\0';
 
     *port = 80u;
     if (*cursor == ':') {
@@ -286,6 +287,26 @@ static int parse_browser_target(const char *text, uint8_t address[4],
     }
     text_copy(path, cursor, 96u);
     return text_length(path) == text_length(cursor);
+}
+
+static int parse_browser_ipv4(const char *host, uint8_t address[4])
+{
+    const char *cursor = host;
+    for (uint32_t part = 0u; part < 4u; ++part) {
+        uint32_t value = 0u;
+        uint32_t digits = 0u;
+        while (*cursor >= '0' && *cursor <= '9') {
+            value = value * 10u + (uint32_t)(*cursor++ - '0');
+            if (value > 255u || ++digits > 3u) {
+                return 0;
+            }
+        }
+        if (digits == 0u || (part < 3u ? *cursor++ != '.' : *cursor != '\0')) {
+            return 0;
+        }
+        address[part] = (uint8_t)value;
+    }
+    return 1;
 }
 
 static void browser_add_character(char character, uint32_t *line_length,
@@ -370,35 +391,47 @@ static void browser_load_page(void)
 {
     uint8_t address[4];
     uint16_t port;
+    char host[64];
     char path[96];
     browser_line_count = 0u;
-    if (!parse_browser_target(browser_input, address, &port, path)) {
-        text_copy(browser_status, "INVALID IPV4 URL",
-                  sizeof(browser_status));
+    if (!parse_browser_target(browser_input, host, &port, path)) {
+        text_copy(browser_status, "INVALID HTTP URL", sizeof(browser_status));
+        browser_status_color = 4u;
         return;
     }
     struct network_config config;
     network_get_config(&config);
     if (config.configured == 0u) {
         text_copy(browser_status, "RUN DHCP FIRST", sizeof(browser_status));
+        browser_status_color = 14u;
+        return;
+    }
+    if (!parse_browser_ipv4(host, address) &&
+        !network_resolve_ipv4(host, address)) {
+        text_copy(browser_status, "DNS LOOKUP FAILED",
+                  sizeof(browser_status));
+        browser_status_color = 12u;
         return;
     }
 
     char response[BROWSER_RESPONSE_SIZE];
     uint32_t response_length = 0u;
-    if (!network_http_get(address, port, path, response, sizeof(response),
-                          &response_length)) {
+    if (!network_http_get(address, port, host, path, response,
+                          sizeof(response), &response_length)) {
         text_copy(browser_status, "HTTP REQUEST FAILED",
                   sizeof(browser_status));
+        browser_status_color = 5u;
         return;
     }
     if (!browser_render_response(response, response_length)) {
         text_copy(browser_status, "INVALID HTTP RESPONSE",
                   sizeof(browser_status));
+        browser_status_color = 4u;
         return;
     }
     text_copy(browser_status, "HTTP RESPONSE RECEIVED",
               sizeof(browser_status));
+    browser_status_color = 10u;
 }
 
 static void draw_terminal(int32_t x, int32_t y)
@@ -416,8 +449,8 @@ static void draw_terminal(int32_t x, int32_t y)
 
 static void draw_browser(int32_t x, int32_t y)
 {
-    video_draw_text(x + 5, y + 5, "IPV4 HTTP BROWSER", 1u);
-    video_draw_text(x + 5, y + 16, browser_status, 4u);
+    video_draw_text(x + 5, y + 5, "HTTP BROWSER URL", 1u);
+    video_draw_text(x + 5, y + 16, browser_status, browser_status_color);
     for (uint32_t row = 0u; row < browser_line_count; ++row) {
         video_draw_text(x + 5, y + 28 + (int32_t)row * 10,
                         browser_lines[row], 1u);
@@ -553,8 +586,9 @@ void desktop_apps_initialize(void)
     browser_input_length = 0u;
     browser_input[0] = '\0';
     browser_line_count = 0u;
-    text_copy(browser_status, "ENTER IP:PORT/PATH",
+    text_copy(browser_status, "ENTER HOST:PORT/PATH",
               sizeof(browser_status));
+    browser_status_color = 4u;
 }
 
 void desktop_app_draw(uint32_t index, int32_t x, int32_t y,

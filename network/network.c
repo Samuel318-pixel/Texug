@@ -157,7 +157,7 @@ static int append_decimal(char *buffer, uint32_t capacity, uint32_t *length,
     uint32_t count = 0u;
     do {
         digits[count++] = (char)('0' + value % 10u);
-        value = (uint8_t)(value / 10u);
+        value = (uint16_t)(value / 10u);
     } while (value != 0u);
     while (count != 0u) {
         if (*length + 1u >= capacity) {
@@ -830,12 +830,29 @@ int network_ping(const uint8_t address[4], uint32_t *round_trip_ms)
 }
 
 int network_http_get(const uint8_t address[4], uint16_t port,
-                     const char *path, char *response,
+                     const char *host, const char *path, char *response,
                      uint32_t capacity, uint32_t *response_length)
 {
     if (network_available == 0u || configuration.configured == 0u ||
-        address == 0 || path == 0 || response == 0 || capacity < 2u ||
+        address == 0 || host == 0 || path == 0 || response == 0 ||
+        capacity < 2u ||
         response_length == 0 || *path != '/') {
+        return 0;
+    }
+    uint32_t host_length = 0u;
+    while (host[host_length] != '\0') {
+        char character = host[host_length];
+        if (!((character >= 'a' && character <= 'z') ||
+              (character >= 'A' && character <= 'Z') ||
+              (character >= '0' && character <= '9') ||
+              character == '.' || character == '-')) {
+            return 0;
+        }
+        if (++host_length >= 64u) {
+            return 0;
+        }
+    }
+    if (host_length == 0u) {
         return 0;
     }
     for (uint32_t index = 0u; path[index] != '\0'; ++index) {
@@ -857,20 +874,13 @@ int network_http_get(const uint8_t address[4], uint16_t port,
                      " HTTP/1.0\r\nHost: ")) {
         return 0;
     }
-    for (uint32_t index = 0u; index < 4u; ++index) {
-        if ((index != 0u &&
-             !append_text(request, sizeof(request), &request_length, ".")) ||
-            !append_decimal(request, sizeof(request), &request_length,
-                            address[index])) {
-            return 0;
-        }
+    if (!append_text(request, sizeof(request), &request_length, host)) {
+        return 0;
     }
-    if (port != 80u) {
-        if (!append_text(request, sizeof(request), &request_length, ":") ||
-            !append_decimal(request, sizeof(request), &request_length,
-                            port)) {
-            return 0;
-        }
+    if (port != 80u &&
+        (!append_text(request, sizeof(request), &request_length, ":") ||
+         !append_decimal(request, sizeof(request), &request_length, port))) {
+        return 0;
     }
     if (!append_text(request, sizeof(request), &request_length,
                      "\r\nConnection: close\r\n\r\n")) {

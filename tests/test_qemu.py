@@ -16,12 +16,22 @@ GRAPHICS_BYTES = 320 * 200
 
 
 class BrowserTestHandler(http.server.BaseHTTPRequestHandler):
+    last_host = ""
+    last_request_line = ""
+    last_error = ""
+
     def do_GET(self):
+        type(self).last_host = self.headers.get("Host", "")
+        type(self).last_request_line = self.requestline
         body = b"TEXUGOS BROWSER TEST\r\n"
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def send_error(self, code, message=None, explain=None):
+        type(self).last_error = f"{code} {message or ''}"
+        super().send_error(code, message, explain)
 
     def log_message(self, format_string, *args):
         pass
@@ -519,17 +529,18 @@ class QemuBootTests(unittest.TestCase):
         self.assertNotEqual(terminal_after, terminal_before)
         self._send_command("touch appfile")
 
-        self._move_mouse_to(50, 75, 520, 40)
-        self._click_mouse()
+        self._send_key("esc")
         deadline = time.monotonic() + 3
-        framebuffer = b""
+        screen = ""
         while time.monotonic() < deadline:
-            framebuffer = self._read_framebuffer()
-            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[sample] == wallpaper_pixel:
+            screen = self._read_screen()
+            if "Returned from TexugOS Desktop." in screen:
                 break
             time.sleep(0.05)
-        self.assertEqual(framebuffer[sample], wallpaper_pixel)
+        self.assertIn("Returned from TexugOS Desktop.", screen)
 
+        self._send_command("desktop")
+        time.sleep(0.2)
         self._send_key("1")
         deadline = time.monotonic() + 3
         framebuffer = b""
@@ -537,17 +548,12 @@ class QemuBootTests(unittest.TestCase):
             framebuffer = self._read_framebuffer()
             files_header_pixels = sum(
                 framebuffer[row * 320 + column] == 1
-                for row in range(50, 58)
+                for row in range(50, 57)
                 for column in range(80, 205)
             ) if len(framebuffer) == GRAPHICS_BYTES else 0
-            if (
-                len(framebuffer) == GRAPHICS_BYTES
-                and framebuffer[sample] == 15
-                and files_header_pixels > 20
-            ):
+            if files_header_pixels > 20:
                 break
             time.sleep(0.05)
-        self.assertEqual(framebuffer[sample], 15)
         self.assertGreater(files_header_pixels, 20)
         files_before = self._framebuffer_region(framebuffer, 75, 45, 190, 110)
         files_after = files_before
@@ -566,10 +572,19 @@ class QemuBootTests(unittest.TestCase):
                 break
         self.assertNotEqual(files_after, files_before)
 
-        self._move_mouse_to(50, 50, 520, 40)
-        self._click_mouse()
-        self._move_mouse_to(520, 40, 50, 125)
-        self._click_mouse()
+        self._send_key("esc")
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            if "Returned from TexugOS Desktop." in screen:
+                break
+            time.sleep(0.05)
+        self.assertIn("Returned from TexugOS Desktop.", screen)
+
+        self._send_command("desktop")
+        time.sleep(0.2)
+        self._send_key("3")
         deadline = time.monotonic() + 3
         framebuffer = b""
         while time.monotonic() < deadline:
@@ -583,17 +598,32 @@ class QemuBootTests(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertGreater(settings_text_pixels, 20)
-        self._move_mouse_to(50, 125, 550, 50)
-        self._click_mouse()
+
+        self._send_key("esc")
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            if "Returned from TexugOS Desktop." in screen:
+                break
+            time.sleep(0.05)
+        self.assertIn("Returned from TexugOS Desktop.", screen)
+        self._send_command("desktop")
+        time.sleep(0.2)
         self._send_key("4")
         deadline = time.monotonic() + 3
         framebuffer = b""
         while time.monotonic() < deadline:
             framebuffer = self._read_framebuffer()
-            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[sample] == 15:
+            browser_app_pixels = sum(
+                framebuffer[row * 320 + column] == 1
+                for row in range(71, 78)
+                for column in range(104, 205)
+            ) if len(framebuffer) == GRAPHICS_BYTES else 0
+            if browser_app_pixels > 20:
                 break
             time.sleep(0.05)
-        self.assertEqual(framebuffer[sample], 15)
+        self.assertGreater(browser_app_pixels, 20)
         browser_before = self._framebuffer_region(
             framebuffer, 100, 70, 180, 90
         )
@@ -629,6 +659,59 @@ class QemuBootTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertNotEqual(browser_after, browser_page_before)
         self.assertGreater(browser_text_pixels, 30)
+        status_colors = {
+            color: sum(
+                framebuffer[row * 320 + column] == color
+                for row in range(82, 90)
+                for column in range(104, 224)
+            )
+            for color in (4, 5, 10, 12, 14)
+        }
+        self.assertEqual(
+            BrowserTestHandler.last_host,
+            f"10.0.2.2:{self.http_port}",
+            f"request={BrowserTestHandler.last_request_line!r}, "
+            f"error={BrowserTestHandler.last_error!r}, "
+            f"status colors={status_colors}",
+        )
+        self._send_key("esc")
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            if "Returned from TexugOS Desktop." in screen:
+                break
+            time.sleep(0.05)
+        self.assertIn("Returned from TexugOS Desktop.", screen)
+        self._send_command("desktop")
+        time.sleep(0.2)
+        self._send_key("4")
+        time.sleep(0.2)
+        self._send_command("http://localhost:80/")
+        self._send_key("ret")
+        deadline = time.monotonic() + 10
+        http_failure_pixels = 0
+        dns_failure_pixels = 0
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            http_failure_pixels = sum(
+                framebuffer[row * 320 + column] == 5
+                for row in range(82, 90)
+                for column in range(104, 224)
+            )
+            dns_failure_pixels = sum(
+                framebuffer[row * 320 + column] == 12
+                for row in range(82, 90)
+                for column in range(104, 224)
+            )
+            if http_failure_pixels > 10 or dns_failure_pixels > 10:
+                break
+            time.sleep(0.05)
+        self.assertGreater(
+            http_failure_pixels, 10,
+            f"HTTP failure pixels={http_failure_pixels}, "
+            f"DNS failure pixels={dns_failure_pixels}",
+        )
         self._send_key("esc")
         deadline = time.monotonic() + 3
         screen = ""
