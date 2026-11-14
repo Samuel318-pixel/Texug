@@ -367,6 +367,18 @@ class QemuBootTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertIn(bytes((4,)), game_view)
 
+        view_before_enemy_move = game_view
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            game_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if game_view != view_before_enemy_move:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(game_view, view_before_enemy_move)
+
         view_before_shot = game_view
         self._send_key("f")
         deadline = time.monotonic() + 3

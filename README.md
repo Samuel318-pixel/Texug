@@ -44,8 +44,9 @@ status and sends keyboard and mouse input to exercise shell commands, PCI
 device listing, FAT32 directory navigation, and PS/2 mouse packet handling.
 It also verifies the 320×200 VGA desktop, opens and closes a window using the
 mouse, exercises the graphical terminal and FAT32 file browser, checks the
-system-information app, starts the native raycasting arena, tests its shooting
-and mouse-aim controls, obtains a DHCP lease, pings the QEMU network gateway,
+system-information app, starts the native raycasting arena, verifies enemy
+pursuit and tests its shooting and mouse-aim controls, obtains a DHCP lease,
+pings the QEMU network gateway,
 resolves `localhost` through the DHCP-provided DNS server,
 loads a page from a local HTTP test server through QEMU networking using a
 formatted HTTP URL, and
@@ -75,8 +76,9 @@ are claimed or included.
   collision.
 - Partial: DNS currently resolves IPv4 A records only. The game has two
   compact arena layouts, but the QEMU regression covers play controls in the
-  first one; enemies are static and there is no sound. Stage 6 device support
-  and all networking have only been exercised with QEMU-emulated hardware.
+  first one; enemies pursue the player but there is no sound. Stage 6 device
+  support and all networking have only been exercised with QEMU-emulated
+  hardware.
   Desktop apps and the game run inside the kernel; user-mode application
   processes and isolation are not implemented. Networking has no TLS/HTTPS,
   JavaScript, or general-purpose TCP sockets and has only been tested with

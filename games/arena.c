@@ -66,6 +66,7 @@ static uint8_t player_ammo;
 static uint8_t enemies_killed;
 static int32_t mouse_turn_remainder;
 static uint32_t next_attack_tick;
+static uint32_t next_enemy_move_tick;
 static char last_action[12];
 
 static int32_t direction_x(uint8_t angle)
@@ -160,7 +161,9 @@ static void reset_level(void)
         enemies[0] = (struct arena_enemy){7u, 3u, 3u, 1u};
         enemies[1] = (struct arena_enemy){2u, 7u, 3u, 1u};
     }
-    next_attack_tick = pit_ticks_read() + 200u;
+    uint32_t ticks = pit_ticks_read();
+    next_attack_tick = ticks + 200u;
+    next_enemy_move_tick = ticks + 60u;
     last_action[0] = '\0';
 }
 
@@ -185,9 +188,63 @@ static void move_player(int32_t dx, int32_t dy)
     }
 }
 
+static int try_move_enemy(uint32_t index, int32_t step_x, int32_t step_y)
+{
+    int32_t next_x = (int32_t)enemies[index].x + step_x;
+    int32_t next_y = (int32_t)enemies[index].y + step_y;
+    if (next_x < 0 || next_y < 0 || next_x >= (int32_t)MAP_SIZE ||
+        next_y >= (int32_t)MAP_SIZE ||
+        worlds[current_level - 1u][next_y][next_x] == '#' ||
+        ((uint32_t)next_x == ((uint32_t)player_x >> 8) &&
+         (uint32_t)next_y == ((uint32_t)player_y >> 8))) {
+        return 0;
+    }
+    for (uint32_t other = 0u; other < ENEMY_COUNT; ++other) {
+        if (other != index && enemies[other].alive &&
+            enemies[other].x == (uint32_t)next_x &&
+            enemies[other].y == (uint32_t)next_y) {
+            return 0;
+        }
+    }
+    enemies[index].x = (uint8_t)next_x;
+    enemies[index].y = (uint8_t)next_y;
+    return 1;
+}
+
+static void move_enemy_toward_player(uint32_t index)
+{
+    int32_t delta_x = (int32_t)((uint32_t)player_x >> 8) - enemies[index].x;
+    int32_t delta_y = (int32_t)((uint32_t)player_y >> 8) - enemies[index].y;
+    int32_t abs_x = delta_x < 0 ? -delta_x : delta_x;
+    int32_t abs_y = delta_y < 0 ? -delta_y : delta_y;
+    int prefer_x = abs_x >= abs_y;
+
+    for (uint32_t attempt = 0u; attempt < 2u; ++attempt) {
+        int move_x = attempt == 0u ? prefer_x : !prefer_x;
+        int32_t step_x = move_x && delta_x != 0
+                             ? (delta_x < 0 ? -1 : 1)
+                             : 0;
+        int32_t step_y = !move_x && delta_y != 0
+                             ? (delta_y < 0 ? -1 : 1)
+                             : 0;
+        if ((step_x != 0 || step_y != 0) &&
+            try_move_enemy(index, step_x, step_y)) {
+            return;
+        }
+    }
+}
+
 static void update_enemies(void)
 {
     uint32_t ticks = pit_ticks_read();
+    if ((int32_t)(ticks - next_enemy_move_tick) >= 0) {
+        next_enemy_move_tick = ticks + 60u;
+        for (uint32_t index = 0u; index < ENEMY_COUNT; ++index) {
+            if (enemies[index].alive) {
+                move_enemy_toward_player(index);
+            }
+        }
+    }
     if ((int32_t)(ticks - next_attack_tick) < 0) {
         return;
     }
