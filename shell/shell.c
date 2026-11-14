@@ -5,6 +5,7 @@
 #include "frame_allocator.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "pci.h"
 #include "shell.h"
 
 #define COMMAND_BUFFER_SIZE 128u
@@ -114,7 +115,7 @@ static int parse_command(char *line, char command[COMMAND_NAME_SIZE],
 static void print_help(void)
 {
     console_write("Commands: help clear echo ls cd mkdir touch cat rm\n");
-    console_write("          reboot shutdown memory version processes mouse\n");
+    console_write("          reboot shutdown memory version processes mouse devices\n");
 }
 
 static void list_directory(void)
@@ -240,6 +241,38 @@ static void remove_entry(const char *name)
     }
 }
 
+static void list_pci_devices(void)
+{
+    uint32_t count = pci_device_count();
+    console_write("PCI devices: ");
+    console_write_u32(count);
+    console_write("\n");
+    if (pci_inventory_truncated()) {
+        console_write("PCI inventory truncated at 64 devices.\n");
+    }
+    for (uint32_t index = 0; index < count; ++index) {
+        struct pci_device device;
+        if (!pci_get_device(index, &device)) {
+            console_write("PCI inventory changed while reading.\n");
+            return;
+        }
+        console_write("PCI ");
+        console_write_u32(device.bus);
+        console_write(":");
+        console_write_u32(device.slot);
+        console_write(".");
+        console_write_u32(device.function);
+        console_write(" ID ");
+        console_write_hex32(((uint32_t)device.vendor_id << 16) |
+                            device.device_id);
+        console_write(" class ");
+        console_write_hex32(((uint32_t)device.class_code << 16) |
+                            ((uint32_t)device.subclass << 8) |
+                            device.programming_interface);
+        console_write("\n");
+    }
+}
+
 static void reboot_system(void)
 {
     uint8_t status;
@@ -329,6 +362,8 @@ static void execute_command(char *line)
         console_write(" buttons ");
         console_write_u32(state.buttons);
         console_write("\n");
+    } else if (string_equal(command, "devices")) {
+        list_pci_devices();
     } else {
         console_write("Unknown command. Type 'help'.\n");
     }

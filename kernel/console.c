@@ -64,6 +64,14 @@ void console_write_character(char character)
     put_character(character);
 }
 
+void console_write_hex32(uint32_t value)
+{
+    static const char digits[] = "0123456789ABCDEF";
+    for (int32_t shift = 28; shift >= 0; shift -= 4) {
+        put_character(digits[(value >> shift) & 0x0fu]);
+    }
+}
+
 void console_write_u32(uint32_t value)
 {
     char digits[10];

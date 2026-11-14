@@ -195,6 +195,7 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("Usable RAM:", self.screen)
         self.assertIn("Paging: 16 MiB identity map active", self.screen)
         self.assertIn("Memory: frame allocator and kernel heap active", self.screen)
+        self.assertRegex(self.screen, r"PCI: [1-9][0-9]* devices enumerated")
         self.assertIn("ATA: QEMU HARDDISK", self.screen)
         self.assertIn("FAT32: mount and CRUD test passed", self.screen)
         self.assertIn("Keyboard: PS/2 input enabled", self.screen)
@@ -217,6 +218,8 @@ class QemuBootTests(unittest.TestCase):
         position = mouse_screen.split(" position ", 1)[1].split(" buttons", 1)[0]
         self.assertNotEqual(position, "320,100")
         self._run_shell_command("version", "TexugOS version 0.1.0")
+        devices = self._run_shell_command("devices", "PCI devices:")
+        self.assertIn("PCI 0:", devices)
         self._run_shell_command("echo ready", "ready")
         self._run_shell_command("mkdir test", "Directory created.")
         screen = self._run_shell_command("cd test", "texugos:/TEST >")
