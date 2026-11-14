@@ -429,6 +429,80 @@ class QemuBootTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertIn("Returned from TexugOS Desktop.", screen)
 
+    def test_native_arena_second_level_progression(self):
+        self._send_command("desktop")
+        time.sleep(0.2)
+        self._send_key("5")
+        time.sleep(0.2)
+        self._send_key("ret")
+
+        deadline = time.monotonic() + 3
+        level_one_view = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            level_one_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if bytes((4,)) in level_one_view:
+                break
+            time.sleep(0.05)
+        self.assertIn(bytes((4,)), level_one_view)
+
+        for _ in range(3):
+            self._send_key("f")
+        for _ in range(11):
+            self._send_key("e")
+        for _ in range(3):
+            self._send_key("f")
+
+        deadline = time.monotonic() + 3
+        won_view = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            won_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if bytes((10,)) in won_view:
+                break
+            time.sleep(0.05)
+        self.assertIn(bytes((10,)), won_view)
+
+        self._send_key("ret")
+        deadline = time.monotonic() + 3
+        level_two_view = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            level_two_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if bytes((4,)) in level_two_view and level_two_view != level_one_view:
+                break
+            time.sleep(0.05)
+        self.assertIn(bytes((4,)), level_two_view)
+        self.assertNotEqual(level_two_view, level_one_view)
+
+        view_before_level_two_enemy_move = level_two_view
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            level_two_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if level_two_view != view_before_level_two_enemy_move:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(level_two_view, view_before_level_two_enemy_move)
+
+        self._send_key("esc")
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            if "Returned from TexugOS Desktop." in screen:
+                break
+            time.sleep(0.05)
+        self.assertIn("Returned from TexugOS Desktop.", screen)
+
     def test_shell_commands_and_fat32_navigation(self):
         help_screen = self._run_shell_command(
             "help", "Commands: help clear echo ls cd mkdir touch cat rm"
