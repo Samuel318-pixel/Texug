@@ -15,7 +15,7 @@ freestanding C entry point. The entry point reports usable RAM, initializes
 and enables a 16 MiB identity-mapped paging region, installs exception and IRQ
 handlers in the IDT, remaps the 8259 PIC, and starts the PIT at 100 Hz. Timer
 interrupts are acknowledged and counted. A physical-frame bitmap is populated
-from E820, the kernel has a small coalescing heap, and a cooperative scheduler
+from E820, the kernel has a small coalescing heap, and a preemptive scheduler
 can switch between kernel threads with separate stacks. A polled primary-master
 ATA PIO driver mounts the image's FAT32 partition and supports short-name file
 and directory creation, reading, and deletion. The kernel also provides a
@@ -70,7 +70,7 @@ are claimed or included.
 - Implemented: BIOS boot sector, LBA disk read, E820 handoff, A20 enable,
   protected-mode transition, initial 16 MiB paging, CPU exceptions, PIC IRQ
   handling, 100 Hz PIT timer, E820-backed frame allocation, kernel heap, and
-  cooperative kernel threads, ATA PIO, FAT32 file/directory operations, a
+  preemptive kernel threads, ATA PIO, FAT32 file/directory operations, a
   PCI enumeration, PS/2 keyboard-driven shell and mouse input, and a
   320×200 VGA desktop with clickable icons, a taskbar, pointer, and
   movable/resizable/minimizable/maximizable windows. The desktop includes
@@ -93,8 +93,8 @@ are claimed or included.
   processes and isolation are not implemented. Networking has no TLS/HTTPS,
   JavaScript, or general-purpose TCP sockets and has only been tested with
   QEMU user-mode networking.
-- Not yet implemented: preemptive scheduling, AHCI/SATA hardware verification,
-  long filenames, a full-featured browser, or user-mode applications.
+- Not yet implemented: AHCI/SATA hardware verification, long filenames, a
+  full-featured browser, or user-mode applications.
 - The QEMU smoke test confirms boot in emulation; physical hardware has not
   been tested.
 - The ISO boots through BIOS El Torito hard-disk emulation; the kernel's ATA

@@ -125,19 +125,17 @@ static void halt_forever(void)
 static void thread_a(void *argument)
 {
     (void)argument;
-    for (uint32_t index = 0; index < 3u; ++index) {
-        ++thread_a_runs;
-        thread_yield();
+    ++thread_a_runs;
+    while (thread_b_runs == 0u) {
+        __asm__ volatile ("pause");
     }
 }
 
 static void thread_b(void *argument)
 {
     (void)argument;
-    for (uint32_t index = 0; index < 3u; ++index) {
-        ++thread_b_runs;
-        thread_yield();
-    }
+    ++thread_b_runs;
+    thread_yield();
 }
 
 void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
@@ -225,13 +223,14 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
         halt_forever();
     }
     uint32_t completed_threads = scheduler_run();
-    if (completed_threads != 2u || thread_a_runs != 3u || thread_b_runs != 3u) {
+    if (completed_threads != 2u || thread_a_runs != 1u ||
+        thread_b_runs != 1u) {
         console_write("Thread scheduler self-test failed.\n");
         halt_forever();
     }
     console_write("Threads: ");
     console_write_u32(completed_threads);
-    console_write(" cooperative tasks completed\n");
+    console_write(" preemptive tasks completed\n");
     console_write("Kernel subsystems active (partial).\n");
     shell_run();
 }

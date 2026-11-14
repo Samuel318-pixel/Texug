@@ -6,6 +6,7 @@
 #include "pit.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "threads.h"
 
 #define IDT_ENTRIES 48u
 #define KERNEL_CODE_SELECTOR 0x08u
@@ -77,6 +78,7 @@ void interrupt_dispatch(const uint32_t *raw_frame)
     if (frame->vector == 32u) {
         pit_handle_interrupt();
         pic_send_eoi(0u);
+        thread_preempt();
         return;
     }
     if (frame->vector == 33u) {
