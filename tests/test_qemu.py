@@ -40,6 +40,7 @@ class QemuBootTests(unittest.TestCase):
         try:
             cls._connect_qmp()
             cls._execute_qmp({"execute": "qmp_capabilities"})
+            cls.screen = ""
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
                 cls._execute_qmp(
@@ -61,7 +62,17 @@ class QemuBootTests(unittest.TestCase):
                         break
                 time.sleep(0.1)
             else:
-                raise TimeoutError("TexugOS did not finish booting in QEMU")
+                visible = "\n".join(
+                    line.rstrip()
+                    for line in (
+                        cls.screen[index : index + 80]
+                        for index in range(0, len(cls.screen), 80)
+                    )
+                    if line.strip()
+                )
+                raise TimeoutError(
+                    f"TexugOS did not finish booting in QEMU; VGA:\n{visible}"
+                )
         except Exception:
             cls._stop_qemu()
             cls.tempdir.cleanup()
@@ -118,6 +129,8 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("Usable RAM:", self.screen)
         self.assertIn("Paging: 16 MiB identity map active", self.screen)
         self.assertIn("Memory: frame allocator and kernel heap active", self.screen)
+        self.assertIn("ATA: QEMU HARDDISK", self.screen)
+        self.assertIn("FAT32: mount and CRUD test passed", self.screen)
         self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
         self.assertIn("PIC: remapped; PIT: 100 Hz", self.screen)
         self.assertIn("Threads: 2 cooperative tasks completed", self.screen)

@@ -8,6 +8,8 @@
 #include "pic.h"
 #include "pit.h"
 #include "threads.h"
+#include "ata.h"
+#include "fat32.h"
 
 #define E820_BUFFER ((volatile const struct e820_entry *)0x5000u)
 #define E820_MAX_ENTRIES 32u
@@ -15,6 +17,48 @@
 
 static volatile uint32_t thread_a_runs;
 static volatile uint32_t thread_b_runs;
+
+static int filesystem_self_test(void)
+{
+    uint32_t root = fat32_root_cluster();
+    uint32_t directory;
+    uint8_t expected[700];
+    uint8_t actual[700];
+    for (uint32_t index = 0; index < sizeof(expected); ++index) {
+        expected[index] = (uint8_t)('A' + index % 26u);
+    }
+
+    if (root == 0u || !fat32_create_directory(root, "KERNEL", &directory)) {
+        console_write("FAT32 mkdir self-test failed.\n");
+        return 0;
+    }
+    if (!fat32_write_file(directory, "BOOT.BIN", expected, sizeof(expected))) {
+        console_write("FAT32 file write self-test failed.\n");
+        return 0;
+    }
+
+    uint32_t size = 0;
+    if (!fat32_read_file(directory, "BOOT.BIN", actual, sizeof(actual), &size) ||
+        size != sizeof(expected)) {
+        console_write("FAT32 file read self-test failed.\n");
+        return 0;
+    }
+    for (uint32_t index = 0; index < size; ++index) {
+        if (actual[index] != expected[index]) {
+            console_write("FAT32 data comparison failed.\n");
+            return 0;
+        }
+    }
+    if (!fat32_delete(directory, "BOOT.BIN")) {
+        console_write("FAT32 file delete self-test failed.\n");
+        return 0;
+    }
+    if (!fat32_delete(root, "KERNEL")) {
+        console_write("FAT32 directory delete self-test failed.\n");
+        return 0;
+    }
+    return 1;
+}
 
 static int memory_self_test(void)
 {
@@ -115,17 +159,47 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     console_write("\nUsable RAM: ");
     console_write_u32((uint32_t)(usable_bytes >> 20));
     console_write(" MiB\n");
+    for (uint32_t index = 0; index < memory_map_entries; ++index) {
+        console_write("E820 ");
+        console_write_u32(index);
+        console_write(" type ");
+        console_write_u32(E820_BUFFER[index].type);
+        console_write(" length high ");
+        console_write_u32((uint32_t)(E820_BUFFER[index].length >> 32));
+        console_write(" low ");
+        console_write_u32((uint32_t)E820_BUFFER[index].length);
+        console_write("\n");
+    }
 
     paging_initialize();
     console_write("Paging: 16 MiB identity map active\n");
 
     frame_allocator_initialize(E820_BUFFER, memory_map_entries);
+    console_write("Memory: frame map initialized\n");
     heap_initialize();
+    console_write("Memory: heap initialized\n");
     if (!memory_self_test()) {
         console_write("Memory allocator initialization failed.\n");
         halt_forever();
     }
     console_write("Memory: frame allocator and kernel heap active\n");
+
+    if (!ata_initialize()) {
+        console_write("ATA primary-master device not detected.\n");
+        halt_forever();
+    }
+    console_write("ATA: ");
+    console_write(ata_model());
+    console_write("\n");
+    if (!fat32_mount()) {
+        console_write("FAT32 mount failed.\n");
+        halt_forever();
+    }
+    if (!filesystem_self_test()) {
+        console_write("FAT32 read/write test failed.\n");
+        halt_forever();
+    }
+    console_write("FAT32: mount and CRUD test passed\n");
 
     interrupts_initialize();
     pic_initialize();
