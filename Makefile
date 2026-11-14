@@ -7,7 +7,8 @@ BUILD := build
 
 CFLAGS := -m32 -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
 	-fno-pie -fno-pic -fno-stack-protector -fno-builtin
-CPPFLAGS := -Ikernel -Imemory -Idrivers -Ifilesystem -Ishell -Idesktop
+CPPFLAGS := -Ikernel -Imemory -Idrivers -Ifilesystem -Ishell -Idesktop \
+	-Inetwork
 ASFLAGS := --32
 LDFLAGS := -m elf_i386 -nostdlib
 
@@ -60,6 +61,12 @@ $(BUILD)/mouse.o: drivers/mouse.c | $(BUILD)
 $(BUILD)/pci.o: drivers/pci.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
+$(BUILD)/rtl8139.o: drivers/rtl8139.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/network.o: network/network.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
 $(BUILD)/video.o: drivers/video.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
@@ -89,7 +96,8 @@ $(BUILD)/payload.elf: $(BUILD)/stage2.o $(BUILD)/interrupt_stubs.o \
 		$(BUILD)/interrupts.o $(BUILD)/threads.o $(BUILD)/paging.o \
 		$(BUILD)/frame_allocator.o $(BUILD)/heap.o \
 		$(BUILD)/pic.o $(BUILD)/pit.o $(BUILD)/keyboard.o $(BUILD)/mouse.o \
-		$(BUILD)/pci.o $(BUILD)/video.o $(BUILD)/desktop.o \
+		$(BUILD)/pci.o $(BUILD)/rtl8139.o $(BUILD)/network.o \
+		$(BUILD)/video.o $(BUILD)/desktop.o \
 		$(BUILD)/desktop_apps.o $(BUILD)/ata.o $(BUILD)/fat32.o \
 		$(BUILD)/shell.o \
 		boot/payload.ld
@@ -105,7 +113,9 @@ test: all
 	$(PYTHON) -m unittest discover -s tests -v
 
 run: all
-	qemu-system-i386 -drive file=$(BUILD)/texugos.img,format=raw,if=ide -boot c
+	qemu-system-i386 -netdev user,id=net0 \
+		-device rtl8139,netdev=net0 \
+		-drive file=$(BUILD)/texugos.img,format=raw,if=ide -boot c
 
 clean:
 	rm -rf $(BUILD)

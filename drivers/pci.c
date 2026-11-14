@@ -33,6 +33,27 @@ static uint32_t read_config(uint8_t bus, uint8_t slot, uint8_t function,
     return in32(PCI_CONFIG_DATA);
 }
 
+static void out16(uint16_t port, uint16_t value)
+{
+    __asm__ volatile ("outw %0, %1" : : "a"(value), "Nd"(port));
+}
+
+uint32_t pci_read_config32(uint8_t bus, uint8_t slot, uint8_t function,
+                           uint8_t offset)
+{
+    return read_config(bus, slot, function, offset);
+}
+
+void pci_write_config16(uint8_t bus, uint8_t slot, uint8_t function,
+                        uint8_t offset, uint16_t value)
+{
+    uint32_t address = 0x80000000u | ((uint32_t)bus << 16) |
+                       ((uint32_t)slot << 11) |
+                       ((uint32_t)function << 8) | (offset & 0xfcu);
+    out32(PCI_CONFIG_ADDRESS, address);
+    out16((uint16_t)(PCI_CONFIG_DATA + (offset & 2u)), value);
+}
+
 void pci_initialize(void)
 {
     device_count = 0u;
@@ -95,4 +116,20 @@ int pci_get_device(uint32_t index, struct pci_device *device)
     }
     *device = devices[index];
     return 1;
+}
+
+int pci_find_device(uint16_t vendor_id, uint16_t device_id,
+                    struct pci_device *device)
+{
+    if (device == 0) {
+        return 0;
+    }
+    for (uint32_t index = 0u; index < device_count; ++index) {
+        if (devices[index].vendor_id == vendor_id &&
+            devices[index].device_id == device_id) {
+            *device = devices[index];
+            return 1;
+        }
+    }
+    return 0;
 }

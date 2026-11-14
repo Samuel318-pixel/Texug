@@ -6,6 +6,7 @@
 #include "frame_allocator.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "network.h"
 #include "pci.h"
 #include "shell.h"
 
@@ -116,7 +117,8 @@ static int parse_command(char *line, char command[COMMAND_NAME_SIZE],
 static void print_help(void)
 {
     console_write("Commands: help clear echo ls cd mkdir touch cat rm\n");
-    console_write("          reboot shutdown memory version processes mouse devices desktop\n");
+    console_write("          reboot shutdown memory version processes mouse devices\n");
+    console_write("          desktop net dhcp ping\n");
 }
 
 static void list_directory(void)
@@ -274,6 +276,87 @@ static void list_pci_devices(void)
     }
 }
 
+static int parse_ipv4_address(const char *text, uint8_t address[4])
+{
+    for (uint32_t part = 0u; part < 4u; ++part) {
+        uint32_t value = 0u;
+        uint32_t digits = 0u;
+        while (*text >= '0' && *text <= '9') {
+            value = value * 10u + (uint32_t)(*text++ - '0');
+            if (value > 255u || ++digits > 3u) {
+                return 0;
+            }
+        }
+        if (digits == 0u) {
+            return 0;
+        }
+        address[part] = (uint8_t)value;
+        if (part < 3u) {
+            if (*text != '.') {
+                return 0;
+            }
+            ++text;
+        } else if (*text != '\0') {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void print_ipv4_address(const uint8_t address[4])
+{
+    for (uint32_t index = 0u; index < 4u; ++index) {
+        if (index != 0u) {
+            console_write(".");
+        }
+        console_write_u32(address[index]);
+    }
+}
+
+static void print_mac_address(const uint8_t address[6])
+{
+    static const char digits[] = "0123456789abcdef";
+    for (uint32_t index = 0u; index < 6u; ++index) {
+        if (index != 0u) {
+            console_write(":");
+        }
+        char octet[3] = {
+            digits[address[index] >> 4],
+            digits[address[index] & 0x0fu],
+            '\0',
+        };
+        console_write(octet);
+    }
+}
+
+static void print_network_status(void)
+{
+    if (!network_is_available()) {
+        console_write("Network interface unavailable.\n");
+        return;
+    }
+    uint8_t mac[6];
+    struct network_config config;
+    network_get_mac(mac);
+    network_get_config(&config);
+    console_write("RTL8139 MAC: ");
+    print_mac_address(mac);
+    console_write("\n");
+    if (config.configured == 0u) {
+        console_write("IPv4: not configured.\n");
+        return;
+    }
+    console_write("IPv4: ");
+    print_ipv4_address(config.address);
+    console_write("\nSubnet: ");
+    print_ipv4_address(config.subnet_mask);
+    console_write("\nGateway: ");
+    print_ipv4_address(config.gateway);
+    console_write("\nDNS: ");
+    print_ipv4_address(config.dns_server);
+    console_write("\n");
+}
+
 static void reboot_system(void)
 {
     uint8_t status;
@@ -367,6 +450,32 @@ static void execute_command(char *line)
         list_pci_devices();
     } else if (string_equal(command, "desktop")) {
         desktop_run();
+    } else if (string_equal(command, "net")) {
+        print_network_status();
+    } else if (string_equal(command, "dhcp")) {
+        if (network_dhcp()) {
+            console_write("DHCP lease acquired.\n");
+        } else {
+            console_write("DHCP failed: ");
+            console_write(network_dhcp_error());
+            console_write(".\n");
+        }
+    } else if (string_equal(command, "ping")) {
+        uint8_t address[4];
+        uint32_t round_trip_ms;
+        if (!parse_ipv4_address(arguments, address)) {
+            console_write("Usage: ping A.B.C.D\n");
+        } else if (network_ping(address, &round_trip_ms)) {
+            console_write("Reply from ");
+            print_ipv4_address(address);
+            console_write(": time ");
+            console_write_u32(round_trip_ms);
+            console_write(" ms\n");
+        } else {
+            console_write("Request timed out from ");
+            print_ipv4_address(address);
+            console_write(".\n");
+        }
     } else {
         console_write("Unknown command. Type 'help'.\n");
     }

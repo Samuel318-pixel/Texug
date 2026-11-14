@@ -1,0 +1,22 @@
+#ifndef TEXUGOS_NETWORK_H
+#define TEXUGOS_NETWORK_H
+
+#include <stdint.h>
+
+struct network_config {
+    uint8_t address[4];
+    uint8_t subnet_mask[4];
+    uint8_t gateway[4];
+    uint8_t dns_server[4];
+    uint8_t configured;
+};
+
+int network_initialize(void);
+int network_is_available(void);
+int network_dhcp(void);
+const char *network_dhcp_error(void);
+int network_ping(const uint8_t address[4], uint32_t *round_trip_ms);
+void network_get_config(struct network_config *config);
+void network_get_mac(uint8_t address[6]);
+
+#endif

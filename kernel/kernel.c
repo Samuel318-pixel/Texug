@@ -14,6 +14,7 @@
 #include "shell.h"
 #include "mouse.h"
 #include "pci.h"
+#include "network.h"
 
 #define E820_BUFFER ((volatile const struct e820_entry *)0x5000u)
 #define E820_MAX_ENTRIES 32u
@@ -178,6 +179,8 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     console_write("PCI: ");
     console_write_u32(pci_device_count());
     console_write(" devices enumerated\n");
+    console_write(network_initialize() ? "Network: RTL8139 ready\n"
+                                       : "Network: RTL8139 unavailable\n");
 
     if (!ata_initialize()) {
         console_write("ATA primary-master device not detected.\n");
@@ -229,6 +232,6 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     console_write("Threads: ");
     console_write_u32(completed_threads);
     console_write(" cooperative tasks completed\n");
-    console_write("Kernel stage 6 active (partial).\n");
+    console_write("Kernel stages 6-9 active (partial).\n");
     shell_run();
 }

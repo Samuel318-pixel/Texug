@@ -30,6 +30,10 @@ class QemuBootTests(unittest.TestCase):
                 "none",
                 "-no-reboot",
                 "-no-shutdown",
+                "-netdev",
+                "user,id=net0",
+                "-device",
+                "rtl8139,netdev=net0",
                 "-drive",
                 f"file={cls.qemu_image},format=raw,if=ide",
                 "-boot",
@@ -272,6 +276,7 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("Paging: 16 MiB identity map active", self.screen)
         self.assertIn("Memory: frame allocator and kernel heap active", self.screen)
         self.assertRegex(self.screen, r"PCI: [1-9][0-9]* devices enumerated")
+        self.assertIn("Network: RTL8139 ready", self.screen)
         self.assertIn("ATA: QEMU HARDDISK", self.screen)
         self.assertIn("FAT32: mount and CRUD test passed", self.screen)
         self.assertIn("Keyboard: PS/2 input enabled", self.screen)
@@ -279,7 +284,7 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
         self.assertIn("PIC: remapped; PIT: 100 Hz", self.screen)
         self.assertIn("Threads: 2 cooperative tasks completed", self.screen)
-        self.assertIn("Kernel stage 6 active (partial).", self.screen)
+        self.assertIn("Kernel stages 6-9 active (partial).", self.screen)
         self.assertIn("TexugOS shell ready.", self.screen)
         self.assertRegex(self.screen, r"PIT ticks: [1-9][0-9]*")
 
@@ -296,6 +301,12 @@ class QemuBootTests(unittest.TestCase):
         self._run_shell_command("version", "TexugOS version 0.1.0")
         devices = self._run_shell_command("devices", "PCI devices:")
         self.assertIn("PCI 0:", devices)
+        self._run_shell_command("net", "IPv4: not configured.")
+        self._run_shell_command("ping invalid", "Usage: ping A.B.C.D")
+        self._run_shell_command("dhcp", "DHCP lease acquired.")
+        network = self._run_shell_command("net", "IPv4: 10.0.2.15")
+        self.assertIn("Gateway: 10.0.2.2", network)
+        self._run_shell_command("ping 10.0.2.2", "Reply from 10.0.2.2")
         self._run_shell_command("echo ready", "ready")
         self._run_shell_command("mkdir test", "Directory created.")
         screen = self._run_shell_command("cd test", "texugos:/TEST >")
