@@ -7,9 +7,9 @@ input, and a basic graphical desktop.
 ## Current implementation (partial)
 
 The boot image contains a 512-byte boot sector followed by a fixed 96-sector
-payload and a FAT32 partition. The boot sector checks BIOS LBA-extension
-support, loads the payload at physical address `0x10000`, and transfers control
-to it. The payload collects
+payload and a FAT32 partition. The boot sector uses BIOS LBA extensions when
+available and falls back to BIOS CHS reads when needed, loads the payload at
+physical address `0x10000`, and transfers control to it. The payload collects
 the BIOS E820 memory map, enables A20, enters 32-bit protected mode, and calls a
 freestanding C entry point. The entry point reports usable RAM, initializes
 and enables a 16 MiB identity-mapped paging region, installs exception and IRQ
@@ -24,18 +24,24 @@ handlers, and an interactive text shell with
 `help`, `clear`, `echo`, `ls`, `cd`, `mkdir`, `touch`, `cat`, `rm`, `reboot`,
 `shutdown`, `memory`, `version`, `processes`, and `mouse` commands.
 
-The image is a raw, partitioned 64 MiB BIOS disk image. It is not an ISO and
-is not yet an installer.
+The default image is a raw, partitioned 64 MiB BIOS disk image. `make iso`
+packages it in a BIOS El Torito ISO using hard-disk emulation. The ISO still
+requires a separate writable ATA disk for FAT32 storage; `make run-iso`
+attaches the raw image as that disk. It is not an installer.
 
 ### Build and test
 
 Required tools: GNU Make, GCC with 32-bit compilation support, GNU binutils,
-Python 3, and QEMU's `qemu-system-i386` for runtime testing.
+Python 3, and QEMU's `qemu-system-i386` for runtime testing. The ISO targets
+also require `xorriso`.
 
 ```sh
 make
 make test
 make run
+make iso
+make test-iso
+make run-iso
 ```
 
 `make test` builds the image, checks its boot-sector signature and FAT32
@@ -51,6 +57,8 @@ resolves `localhost` through the DHCP-provided DNS server,
 loads a page from a local HTTP test server through QEMU networking using a
 formatted HTTP URL, and
 confirms that Escape restores text mode.
+`make test-iso` separately boots the ISO through SeaBIOS and checks the kernel
+and FAT32 test with a writable ATA disk attached.
 The kernel also creates a directory and a 700-byte file, verifies its contents,
 then removes both.
 `make run` starts QEMU with the raw disk image.
@@ -72,9 +80,9 @@ are claimed or included.
   RTL8139 driver, DHCP configuration, ARP, IPv4 ICMP echo, and `net`, `dhcp`,
   `dns` A-record lookup and `ping` shell commands. A text browser can fetch
   HTTP/1.0 pages using IPv4 addresses or DNS names over a minimal TCP client.
-  HTTPS is not supported. The desktop also has a native, two-level raycasting
-  game with movement, mouse aiming, shooting, health, ammo, enemies, and wall
-  collision.
+  A BIOS El Torito ISO target is available. HTTPS is not supported. The
+  desktop also has a native, two-level raycasting game with movement, mouse
+  aiming, shooting, health, ammo, enemies, and wall collision.
 - Partial: DNS currently resolves IPv4 A records only. The game has two
   compact arena layouts; QEMU tests combat in the first and progression to
   the second. Enemies pursue the player, and the PC speaker provides firing,
@@ -89,6 +97,8 @@ are claimed or included.
   long filenames, a full-featured browser, or user-mode applications.
 - The QEMU smoke test confirms boot in emulation; physical hardware has not
   been tested.
+- The ISO boots through BIOS El Torito hard-disk emulation; the kernel's ATA
+  driver still needs a separate writable disk. No installer is included.
 - The ATA device is QEMU's emulated disk; physical HP G42-215BR hardware is
   unavailable for identification and testing.
 - The PS/2 keyboard and mouse are QEMU-emulated devices; the notebook's

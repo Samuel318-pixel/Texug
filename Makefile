@@ -3,6 +3,7 @@ AS := as
 LD := ld
 OBJCOPY := objcopy
 PYTHON := python3
+XORRISO ?= xorriso
 BUILD := build
 
 CFLAGS := -m32 -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
@@ -12,7 +13,7 @@ CPPFLAGS := -Ikernel -Imemory -Idrivers -Ifilesystem -Ishell -Idesktop \
 ASFLAGS := --32
 LDFLAGS := -m elf_i386 -nostdlib
 
-.PHONY: all clean test run
+.PHONY: all clean iso test test-iso run run-iso
 
 all: $(BUILD)/texugos.img
 
@@ -112,13 +113,28 @@ $(BUILD)/payload.bin: $(BUILD)/payload.elf
 $(BUILD)/texugos.img: $(BUILD)/boot.bin $(BUILD)/payload.bin tools/mkimage.py
 	$(PYTHON) tools/mkimage.py $(BUILD)/boot.bin $(BUILD)/payload.bin $@
 
+$(BUILD)/texugos.iso: $(BUILD)/texugos.img
+	cd $(BUILD) && $(XORRISO) -as mkisofs -o texugos.iso \
+		-V TEXUGOS -b texugos.img -hard-disk-boot texugos.img
+
+iso: $(BUILD)/texugos.iso
+
 test: all
 	$(PYTHON) -m unittest discover -s tests -v
+
+test-iso: $(BUILD)/texugos.iso
+	TEXUGOS_TEST_ISO=1 $(PYTHON) -m unittest discover -s tests -p test_iso.py -v
 
 run: all
 	qemu-system-i386 -netdev user,id=net0 \
 		-device rtl8139,netdev=net0 \
 		-drive file=$(BUILD)/texugos.img,format=raw,if=ide -boot c
+
+run-iso: $(BUILD)/texugos.iso
+	qemu-system-i386 -netdev user,id=net0 \
+		-device rtl8139,netdev=net0 \
+		-drive file=$(BUILD)/texugos.img,format=raw,if=ide,index=0 \
+		-cdrom $(BUILD)/texugos.iso -boot d
 
 clean:
 	rm -rf $(BUILD)

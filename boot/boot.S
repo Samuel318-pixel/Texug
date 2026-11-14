@@ -23,23 +23,66 @@ boot_entry:
     movw $0x55aa, %bx
     movb $0x41, %ah
     int $0x13
-    jc lba_error
+    jc chs_load
     cmpw $0xaa55, %bx
-    jne lba_error
+    jne chs_load
     testw $1, %cx
-    jz lba_error
+    jz chs_load
 
     movb boot_drive, %dl
     movw $disk_packet, %si
     movb $0x42, %ah
     int $0x13
+    jc chs_load
+    jmp payload_loaded
+
+chs_load:
+    movb boot_drive, %dl
+    movb $0x08, %ah
+    int $0x13
     jc disk_error
+    andb $0x3f, %cl
+    testb %cl, %cl
+    jz disk_error
+    movb %cl, sectors_per_track
+    xorw %ax, %ax
+    movb %dh, %al
+    incw %ax
+    movw %ax, heads_per_cylinder
+    movw $1, current_lba
+    movw $96, sectors_left
+    movw $0, buffer_offset
 
+chs_read_next:
+    movw current_lba, %ax
+    xorw %dx, %dx
+    divw sectors_per_track
+    movb %dl, %cl
+    incb %cl
+    xorw %dx, %dx
+    divw heads_per_cylinder
+    movw %ax, current_cylinder
+    movb %dl, %dh
+    movw current_cylinder, %ax
+    movb %al, %ch
+    shrw $2, %ax
+    andb $0xc0, %al
+    orb %al, %cl
+    movb boot_drive, %dl
+    movw buffer_offset, %bx
+    movw $0x1000, %ax
+    movw %ax, %es
+    movb $0x02, %ah
+    movb $1, %al
+    int $0x13
+    jc disk_error
+    incw current_lba
+    addw $512, buffer_offset
+    decw sectors_left
+    jnz chs_read_next
+
+payload_loaded:
     ljmp $0x1000, $0x0000
-
-lba_error:
-    movw $lba_message, %si
-    jmp boot_error
 
 disk_error:
     movw $disk_message, %si
@@ -64,8 +107,6 @@ print_done:
 
 boot_message:
     .asciz "TexugOS: BIOS boot\r\n"
-lba_message:
-    .asciz "TexugOS: BIOS LBA extensions unavailable\r\n"
 disk_message:
     .asciz "TexugOS: payload read failed\r\n"
 
@@ -79,6 +120,18 @@ disk_packet:
     .word 0x0000
     .word 0x1000
     .quad 1
+sectors_per_track:
+    .word 0
+heads_per_cylinder:
+    .word 0
+current_lba:
+    .word 0
+current_cylinder:
+    .word 0
+sectors_left:
+    .word 0
+buffer_offset:
+    .word 0
 
 .org 510
 .word 0xaa55
