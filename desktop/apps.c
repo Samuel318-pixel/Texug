@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "apps.h"
+#include "arena.h"
 #include "fat32.h"
 #include "frame_allocator.h"
 #include "mouse.h"
@@ -9,7 +10,7 @@
 #include "pit.h"
 #include "video.h"
 
-#define APP_COUNT 4u
+#define APP_COUNT 5u
 #define FILE_CAPACITY 64u
 #define FILE_PREVIEW_SIZE 256u
 #define TERMINAL_ROWS 6u
@@ -548,6 +549,7 @@ void desktop_apps_initialize(void)
     terminal_clear_lines();
     terminal_add_line("TEXUGOS TERMINAL READY");
     terminal_add_line("TYPE HELP FOR COMMANDS");
+    arena_initialize();
     browser_input_length = 0u;
     browser_input[0] = '\0';
     browser_line_count = 0u;
@@ -558,7 +560,6 @@ void desktop_apps_initialize(void)
 void desktop_app_draw(uint32_t index, int32_t x, int32_t y,
                       uint32_t width, uint32_t height)
 {
-    (void)width;
     if (index >= APP_COUNT) {
         return;
     }
@@ -568,13 +569,19 @@ void desktop_app_draw(uint32_t index, int32_t x, int32_t y,
         draw_terminal(x, y);
     } else if (index == 2u) {
         draw_settings(x, y);
-    } else {
+    } else if (index == 3u) {
         draw_browser(x, y);
+    } else {
+        arena_draw(x, y, width, height);
     }
 }
 
 void desktop_app_handle_key(uint32_t index, char key)
 {
+    if (index == 4u) {
+        arena_handle_key(key);
+        return;
+    }
     if (index == 0u) {
         if (key == '\b') {
             if (files_preview_open) {
@@ -639,8 +646,19 @@ void desktop_app_handle_key(uint32_t index, char key)
     }
 }
 
+void desktop_app_handle_mouse(uint32_t index, int32_t delta_x)
+{
+    if (index == 4u) {
+        arena_handle_mouse(delta_x);
+    }
+}
+
 void desktop_app_handle_click(uint32_t index, int32_t x, int32_t y)
 {
+    if (index == 4u) {
+        arena_fire();
+        return;
+    }
     if (index != 0u || files_preview_open || x < 0 || y < 22) {
         return;
     }

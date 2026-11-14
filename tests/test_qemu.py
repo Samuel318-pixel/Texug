@@ -318,9 +318,94 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("IDT: exceptions and IRQ vectors installed", self.screen)
         self.assertIn("PIC: remapped; PIT: 100 Hz", self.screen)
         self.assertIn("Threads: 2 cooperative tasks completed", self.screen)
-        self.assertIn("Kernel stages 6-10 active (partial).", self.screen)
+        self.assertIn("Kernel subsystems active (partial).", self.screen)
         self.assertIn("TexugOS shell ready.", self.screen)
         self.assertRegex(self.screen, r"PIT ticks: [1-9][0-9]*")
+
+    def test_native_arena_raycasting_controls_and_shooting(self):
+        self._send_command("desktop")
+        time.sleep(0.2)
+        self._send_mouse_move(-250, 90)
+        time.sleep(0.1)
+        framebuffer = self._read_framebuffer()
+        self.assertEqual(len(framebuffer), GRAPHICS_BYTES)
+        before_window = self._framebuffer_region(framebuffer, 100, 42, 205, 140)
+
+        self._send_key("5")
+        deadline = time.monotonic() + 3
+        title_screen = before_window
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            title_screen = self._framebuffer_region(
+                framebuffer, 100, 42, 205, 140
+            )
+            if title_screen != before_window:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(title_screen, before_window)
+
+        self._send_key("ret")
+        deadline = time.monotonic() + 3
+        game_view = b""
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            game_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if bytes((4,)) in game_view:
+                break
+            time.sleep(0.05)
+        self.assertIn(bytes((4,)), game_view)
+
+        view_before_shot = game_view
+        self._send_key("f")
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            game_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if game_view != view_before_shot:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(game_view, view_before_shot)
+
+        view_before_aim = game_view
+        self._send_mouse_move(8, 0)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            game_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if game_view != view_before_aim:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(game_view, view_before_aim)
+
+        view_before_move = game_view
+        for _ in range(6):
+            self._send_key("w")
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            framebuffer = self._read_framebuffer()
+            game_view = self._framebuffer_region(
+                framebuffer, 107, 63, 186, 118
+            )
+            if game_view != view_before_move:
+                break
+            time.sleep(0.05)
+        self.assertNotEqual(game_view, view_before_move)
+
+        self._send_key("esc")
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            if "Returned from TexugOS Desktop." in screen:
+                break
+            time.sleep(0.05)
+        self.assertIn("Returned from TexugOS Desktop.", screen)
 
     def test_shell_commands_and_fat32_navigation(self):
         self._run_shell_command("help", "Commands: help clear echo ls cd mkdir touch cat rm")

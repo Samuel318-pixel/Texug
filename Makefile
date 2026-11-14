@@ -8,7 +8,7 @@ BUILD := build
 CFLAGS := -m32 -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
 	-fno-pie -fno-pic -fno-stack-protector -fno-builtin
 CPPFLAGS := -Ikernel -Imemory -Idrivers -Ifilesystem -Ishell -Idesktop \
-	-Inetwork
+	-Inetwork -Igames
 ASFLAGS := --32
 LDFLAGS := -m elf_i386 -nostdlib
 
@@ -85,6 +85,9 @@ $(BUILD)/desktop.o: desktop/desktop.c | $(BUILD)
 $(BUILD)/desktop_apps.o: desktop/apps.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
+$(BUILD)/arena.o: games/arena.c | $(BUILD)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
 $(BUILD)/interrupt_stubs.o: kernel/interrupt_stubs.S | $(BUILD)
 	$(AS) $(ASFLAGS) -o $@ $<
 
@@ -98,7 +101,7 @@ $(BUILD)/payload.elf: $(BUILD)/stage2.o $(BUILD)/interrupt_stubs.o \
 		$(BUILD)/pic.o $(BUILD)/pit.o $(BUILD)/keyboard.o $(BUILD)/mouse.o \
 		$(BUILD)/pci.o $(BUILD)/rtl8139.o $(BUILD)/network.o \
 		$(BUILD)/video.o $(BUILD)/desktop.o \
-		$(BUILD)/desktop_apps.o $(BUILD)/ata.o $(BUILD)/fat32.o \
+		$(BUILD)/desktop_apps.o $(BUILD)/arena.o $(BUILD)/ata.o $(BUILD)/fat32.o \
 		$(BUILD)/shell.o \
 		boot/payload.ld
 	$(LD) $(LDFLAGS) -T boot/payload.ld -o $@ $(filter %.o,$^)
