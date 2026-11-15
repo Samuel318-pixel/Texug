@@ -24,9 +24,37 @@
 static volatile uint32_t thread_a_runs;
 static volatile uint32_t thread_b_runs;
 
+static int create_filesystem_test_directory(uint32_t root, char name[9],
+                                            uint32_t *cluster)
+{
+    char candidate[9] = "TST00000";
+    for (uint32_t attempt = 0u; attempt < 100000u; ++attempt) {
+        uint32_t value = attempt;
+        for (int32_t index = 7; index >= 3; --index) {
+            candidate[index] = (char)('0' + value % 10u);
+            value /= 10u;
+        }
+
+        struct fat32_entry existing;
+        if (fat32_find(root, candidate, &existing)) {
+            continue;
+        }
+        if (!fat32_create_directory(root, candidate, cluster)) {
+            return 0;
+        }
+        for (uint32_t index = 0u; index < sizeof(candidate); ++index) {
+            name[index] = candidate[index];
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static int filesystem_self_test(void)
 {
     uint32_t root = fat32_root_cluster();
+    uint32_t test_root;
+    char test_directory_name[9];
     uint32_t directory;
     uint8_t expected[700];
     uint8_t actual[700];
@@ -34,7 +62,10 @@ static int filesystem_self_test(void)
         expected[index] = (uint8_t)('A' + index % 26u);
     }
 
-    if (root == 0u || !fat32_create_directory(root, "KERNEL", &directory)) {
+    if (root == 0u ||
+        !create_filesystem_test_directory(root, test_directory_name,
+                                          &test_root) ||
+        !fat32_create_directory(test_root, "KERNEL", &directory)) {
         console_write("FAT32 mkdir self-test failed.\n");
         return 0;
     }
@@ -59,22 +90,24 @@ static int filesystem_self_test(void)
         console_write("FAT32 file delete self-test failed.\n");
         return 0;
     }
-    if (!fat32_delete(root, "KERNEL")) {
+    if (!fat32_delete(test_root, "KERNEL")) {
         console_write("FAT32 directory delete self-test failed.\n");
         return 0;
     }
 
     static const char long_file_name[] =
         "Long filename across VFAT entries.txt";
-    if (!fat32_write_file(root, long_file_name, expected, sizeof(expected))) {
+    if (!fat32_write_file(test_root, long_file_name, expected,
+                          sizeof(expected))) {
         console_write("FAT32 long filename write self-test failed.\n");
         return 0;
     }
     struct fat32_entry long_file;
-    if (!fat32_find(root, "LONG FILENAME ACROSS VFAT ENTRIES.TXT",
+    if (!fat32_find(test_root, "LONG FILENAME ACROSS VFAT ENTRIES.TXT",
                     &long_file) ||
-        !fat32_find(root, "LONGFI~1.TXT", &long_file) ||
-        !fat32_read_file(root, long_file_name, actual, sizeof(actual), &size) ||
+        !fat32_find(test_root, "LONGFI~1.TXT", &long_file) ||
+        !fat32_read_file(test_root, long_file_name, actual, sizeof(actual),
+                         &size) ||
         size != sizeof(expected)) {
         console_write("FAT32 long filename lookup self-test failed.\n");
         return 0;
@@ -85,15 +118,26 @@ static int filesystem_self_test(void)
             return 0;
         }
     }
-    struct fat32_entry listed[2];
+    struct fat32_entry listed[4];
     uint32_t listed_count;
-    if (!fat32_list(root, listed, 2u, &listed_count) ||
-        listed_count != 1u) {
+    if (!fat32_list(test_root, listed, 4u, &listed_count) ||
+        listed_count != 3u) {
+        console_write("FAT32 long filename list self-test failed.\n");
+        return 0;
+    }
+    uint32_t listed_file = listed_count;
+    for (uint32_t index = 0u; index < listed_count; ++index) {
+        if (listed[index].name[0] != '.') {
+            listed_file = index;
+            break;
+        }
+    }
+    if (listed_file == listed_count) {
         console_write("FAT32 long filename list self-test failed.\n");
         return 0;
     }
     for (uint32_t index = 0u; index < sizeof(long_file_name); ++index) {
-        if (listed[0].name[index] != long_file_name[index]) {
+        if (listed[listed_file].name[index] != long_file_name[index]) {
             console_write("FAT32 long filename display test failed.\n");
             return 0;
         }
@@ -102,14 +146,15 @@ static int filesystem_self_test(void)
     uint32_t long_directory_cluster;
     static const char long_directory_name[] =
         "Long directory with spaces";
-    if (!fat32_create_directory(root, long_directory_name,
+    if (!fat32_create_directory(test_root, long_directory_name,
                                 &long_directory_cluster) ||
-        !fat32_find(root, "long directory with spaces", &long_directory) ||
+        !fat32_find(test_root, "long directory with spaces",
+                    &long_directory) ||
         (long_directory.attributes & FAT32_ATTRIBUTE_DIRECTORY) == 0u ||
         long_directory.first_cluster != long_directory_cluster ||
-        !fat32_delete(root, long_directory_name) ||
-        !fat32_delete(root, long_file_name) ||
-        fat32_find(root, "LONGFI~1.TXT", &long_file)) {
+        !fat32_delete(test_root, long_directory_name) ||
+        !fat32_delete(test_root, long_file_name) ||
+        fat32_find(test_root, "LONGFI~1.TXT", &long_file)) {
         console_write("FAT32 long filename CRUD self-test failed.\n");
         return 0;
     }
@@ -119,23 +164,69 @@ static int filesystem_self_test(void)
         maximum_name[index] = 'a';
     }
     maximum_name[sizeof(maximum_name) - 1u] = '\0';
-    if (!fat32_write_file(root, maximum_name, 0, 0u) ||
-        !fat32_find(root, maximum_name, &long_file) ||
-        !fat32_find(root, "AAAAAA~1", &long_file) ||
-        !fat32_list(root, listed, 2u, &listed_count) ||
-        listed_count != 1u) {
+    if (!fat32_write_file(test_root, maximum_name, 0, 0u) ||
+        !fat32_find(test_root, maximum_name, &long_file) ||
+        !fat32_find(test_root, "AAAAAA~1", &long_file) ||
+        !fat32_list(test_root, listed, 4u, &listed_count) ||
+        listed_count != 3u) {
         console_write("FAT32 maximum-length filename test failed.\n");
         return 0;
     }
+    listed_file = listed_count;
+    for (uint32_t index = 0u; index < listed_count; ++index) {
+        if (listed[index].name[0] != '.') {
+            listed_file = index;
+            break;
+        }
+    }
+    if (listed_file == listed_count) {
+        console_write("FAT32 maximum-length filename display failed.\n");
+        return 0;
+    }
     for (uint32_t index = 0u; index < sizeof(maximum_name); ++index) {
-        if (listed[0].name[index] != maximum_name[index]) {
+        if (listed[listed_file].name[index] != maximum_name[index]) {
             console_write("FAT32 maximum-length filename display failed.\n");
             return 0;
         }
     }
-    if (!fat32_delete(root, maximum_name) ||
-        fat32_find(root, "AAAAAA~1", &long_file)) {
+    if (!fat32_delete(test_root, maximum_name) ||
+        fat32_find(test_root, "AAAAAA~1", &long_file)) {
         console_write("FAT32 maximum-length filename delete failed.\n");
+        return 0;
+    }
+
+    uint32_t growth_directory;
+    char filler_name[9] = "FILL0000";
+    if (!fat32_create_directory(test_root, "GROWTH", &growth_directory)) {
+        console_write("FAT32 directory growth setup failed.\n");
+        return 0;
+    }
+    for (uint32_t index = 0u; index < 13u; ++index) {
+        filler_name[6] = (char)('0' + index / 10u);
+        filler_name[7] = (char)('0' + index % 10u);
+        if (!fat32_write_file(growth_directory, filler_name, 0, 0u)) {
+            console_write("FAT32 directory growth fill failed.\n");
+            return 0;
+        }
+    }
+    if (!fat32_write_file(growth_directory, maximum_name, 0, 0u) ||
+        !fat32_find(growth_directory, maximum_name, &long_file) ||
+        long_file.size != 0u ||
+        !fat32_delete(growth_directory, maximum_name)) {
+        console_write("FAT32 multi-cluster directory growth failed.\n");
+        return 0;
+    }
+    for (uint32_t index = 0u; index < 13u; ++index) {
+        filler_name[6] = (char)('0' + index / 10u);
+        filler_name[7] = (char)('0' + index % 10u);
+        if (!fat32_delete(growth_directory, filler_name)) {
+            console_write("FAT32 directory growth cleanup failed.\n");
+            return 0;
+        }
+    }
+    if (!fat32_delete(test_root, "GROWTH") ||
+        !fat32_delete(root, test_directory_name)) {
+        console_write("FAT32 directory growth removal failed.\n");
         return 0;
     }
     return 1;
@@ -256,22 +347,24 @@ void kernel_main(uint32_t boot_magic, uint32_t memory_map_address,
     console_write(network_initialize() ? "Network: RTL8139 ready\n"
                                        : "Network: RTL8139 unavailable\n");
 
-    if (!ata_initialize()) {
-        console_write("ATA primary-master device not detected.\n");
-        halt_forever();
+    int storage_available = ata_initialize();
+    if (!storage_available) {
+        console_write("Storage: ATA PIO device not detected; continuing "
+                      "without FAT32 storage.\n");
+    } else {
+        console_write("ATA: ");
+        console_write(ata_model());
+        console_write("\n");
+        if (!fat32_mount()) {
+            console_write("FAT32: no supported volume mounted; continuing "
+                          "without storage.\n");
+        } else if (!filesystem_self_test()) {
+            console_write("FAT32 read/write test failed.\n");
+            halt_forever();
+        } else {
+            console_write("FAT32: mount, CRUD and LFN test passed\n");
+        }
     }
-    console_write("ATA: ");
-    console_write(ata_model());
-    console_write("\n");
-    if (!fat32_mount()) {
-        console_write("FAT32 mount failed.\n");
-        halt_forever();
-    }
-    if (!filesystem_self_test()) {
-        console_write("FAT32 read/write test failed.\n");
-        halt_forever();
-    }
-    console_write("FAT32: mount, CRUD and LFN test passed\n");
 
     interrupts_initialize();
     pic_initialize();

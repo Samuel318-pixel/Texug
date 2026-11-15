@@ -83,8 +83,12 @@ $(BUILD)/shell.o: shell/shell.c | $(BUILD)
 $(BUILD)/desktop.o: desktop/desktop.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
 
+$(BUILD)/desktop_apps.o: CFLAGS += -Os
+
 $(BUILD)/desktop_apps.o: desktop/apps.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
+
+$(BUILD)/video.o: CFLAGS += -Os
 
 $(BUILD)/arena.o: games/arena.c | $(BUILD)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<
@@ -124,10 +128,12 @@ $(BUILD)/texugos.iso: $(BUILD)/texugos.img
 iso: $(BUILD)/texugos.iso
 
 test: all
-	$(PYTHON) -m unittest discover -s tests -v
+	TEXUGOS_IMAGE=$(BUILD)/texugos.img $(PYTHON) -m unittest discover -s tests -v
 
 test-iso: $(BUILD)/texugos.iso
-	TEXUGOS_TEST_ISO=1 $(PYTHON) -m unittest discover -s tests -p test_iso.py -v
+	TEXUGOS_TEST_ISO=1 TEXUGOS_IMAGE=$(BUILD)/texugos.img \
+		TEXUGOS_ISO=$(BUILD)/texugos.iso \
+		$(PYTHON) -m unittest discover -s tests -p test_iso.py -v
 
 run: all
 	qemu-system-i386 -netdev user,id=net0 \

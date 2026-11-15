@@ -1,16 +1,21 @@
 import json
 import http.server
+import os
 import pathlib
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import tempfile
 import threading
 import time
 import unittest
 
-IMAGE_PATH = pathlib.Path("build/texugos.img").resolve()
+IMAGE_PATH = pathlib.Path(
+    os.environ.get("TEXUGOS_IMAGE", "build/texugos.img")
+).resolve()
+SECTOR_SIZE = 512
 VGA_BYTES = 80 * 25 * 2
 GRAPHICS_BYTES = 320 * 200
 
@@ -55,6 +60,7 @@ class QemuBootTests(unittest.TestCase):
         shutil.copyfile(IMAGE_PATH, cls.qemu_image)
         cls.qmp_path = pathlib.Path(cls.tempdir.name) / "qmp.sock"
         cls.vga_path = pathlib.Path(cls.tempdir.name) / "vga.bin"
+        cls.screenshot_path = pathlib.Path(cls.tempdir.name) / "screenshot.ppm"
         cls.process = subprocess.Popen(
             [
                 "qemu-system-i386",
@@ -152,8 +158,26 @@ class QemuBootTests(unittest.TestCase):
         return "".join(chr(memory[index]) for index in range(0, len(memory), 2))
 
     @classmethod
-    def _send_command(cls, command):
-        for character in command + "\n":
+    def _read_screenshot(cls):
+        cls._execute_qmp(
+            {
+                "execute": "human-monitor-command",
+                "arguments": {
+                    "command-line": f'screendump "{cls.screenshot_path}"'
+                },
+            }
+        )
+        image = cls.screenshot_path.read_bytes()
+        header, pixels = image.split(b"\n255\n", 1)
+        width, height = (int(value) for value in header.split()[-2:])
+        if len(pixels) != width * height * 3:
+            raise AssertionError("QEMU screendump has an unexpected pixel size")
+        return width, height, pixels
+
+    @classmethod
+    def _send_command(cls, command, submit=True):
+        text = command + ("\n" if submit else "")
+        for character in text:
             qcodes = {
                 " ": ["spc"],
                 "\n": ["ret"],
@@ -336,6 +360,105 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("TexugOS shell ready.", self.screen)
         self.assertRegex(self.screen, r"PIT ticks: [1-9][0-9]*")
 
+    def test_boot_continues_when_ata_pio_is_unavailable(self):
+        qmp_path = pathlib.Path(self.tempdir.name) / "qmp-no-disk.sock"
+        vga_path = pathlib.Path(self.tempdir.name) / "vga-no-disk.bin"
+        ahci_image = pathlib.Path(self.tempdir.name) / "texugos-ahci.img"
+        shutil.copyfile(IMAGE_PATH, ahci_image)
+        process = subprocess.Popen(
+            [
+                "qemu-system-i386",
+                "-display",
+                "none",
+                "-no-reboot",
+                "-no-shutdown",
+                "-device",
+                "ich9-ahci,id=ahci",
+                "-drive",
+                f"file={ahci_image},format=raw,if=none,id=sata-disk",
+                "-device",
+                "ide-hd,drive=sata-disk,bus=ahci.0",
+                "-boot",
+                "c",
+                "-qmp",
+                f"unix:{qmp_path},server=on,wait=off",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        qmp_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        qmp_file = None
+
+        def execute_qmp(command):
+            qmp_file.write((json.dumps(command) + "\n").encode())
+            while True:
+                response = json.loads(qmp_file.readline())
+                if "return" in response:
+                    return response["return"]
+                if "error" in response:
+                    raise RuntimeError(response["error"])
+
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if process.poll() is not None:
+                    error = process.stderr.read().decode(errors="replace")
+                    self.fail(
+                        "QEMU exited before the no-disk test started: "
+                        + error
+                    )
+                try:
+                    qmp_socket.connect(str(qmp_path))
+                    break
+                except (FileNotFoundError, ConnectionRefusedError):
+                    time.sleep(0.05)
+            else:
+                self.fail("QEMU QMP socket did not become ready")
+
+            qmp_socket.settimeout(2)
+            qmp_file = qmp_socket.makefile("rwb", buffering=0)
+            json.loads(qmp_file.readline())
+            execute_qmp({"execute": "qmp_capabilities"})
+
+            screen = ""
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                execute_qmp(
+                    {
+                        "execute": "human-monitor-command",
+                        "arguments": {
+                            "command-line": (
+                                f'pmemsave 0xb8000 0x{VGA_BYTES:x} "{vga_path}"'
+                            )
+                        },
+                    }
+                )
+                if vga_path.exists() and vga_path.stat().st_size == VGA_BYTES:
+                    memory = vga_path.read_bytes()
+                    screen = "".join(
+                        chr(memory[index]) for index in range(0, len(memory), 2)
+                    )
+                if "TexugOS shell ready." in screen:
+                    break
+                time.sleep(0.1)
+
+            self.assertIn("ATA PIO device not detected", screen)
+            self.assertIn("continuing without FAT32 storage", screen)
+            self.assertIn("TexugOS shell ready.", screen)
+        finally:
+            if qmp_file is not None:
+                qmp_file.close()
+            qmp_socket.close()
+            if process.poll() is None:
+                process.send_signal(signal.SIGTERM)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            if process.stderr is not None:
+                process.stderr.close()
+
     def test_native_arena_raycasting_controls_and_shooting(self):
         self._send_command("desktop")
         time.sleep(0.2)
@@ -345,7 +468,7 @@ class QemuBootTests(unittest.TestCase):
         self.assertEqual(len(framebuffer), GRAPHICS_BYTES)
         before_window = self._framebuffer_region(framebuffer, 100, 42, 205, 140)
 
-        self._send_key("5")
+        self._send_key("4")
         deadline = time.monotonic() + 3
         title_screen = before_window
         while time.monotonic() < deadline:
@@ -432,11 +555,10 @@ class QemuBootTests(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertIn("Returned from TexugOS Desktop.", screen)
-
     def test_native_arena_second_level_progression(self):
         self._send_command("desktop")
         time.sleep(0.2)
-        self._send_key("5")
+        self._send_key("4")
         time.sleep(0.2)
         self._send_key("ret")
 
@@ -578,6 +700,7 @@ class QemuBootTests(unittest.TestCase):
         self.assertTrue(screen.startswith("texugos:/ >"), screen)
 
     def test_z_graphical_desktop_and_text_mode_return(self):
+        self._run_shell_command("dhcp", "DHCP lease acquired.")
         mouse_screen = self._run_shell_command("mouse", "Mouse packets:")
         mouse_position = mouse_screen.rsplit(" position ", 1)[1].split(
             " buttons", 1
@@ -590,11 +713,11 @@ class QemuBootTests(unittest.TestCase):
         framebuffer = b""
         while time.monotonic() < deadline:
             framebuffer = self._read_framebuffer()
-            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[0] == 1:
+            if len(framebuffer) == GRAPHICS_BYTES and framebuffer[0] == 2:
                 break
             time.sleep(0.05)
         self.assertEqual(len(framebuffer), GRAPHICS_BYTES)
-        self.assertEqual(framebuffer[0], 1)
+        self.assertEqual(framebuffer[0], 2)
 
         sample = 120 * 320 + 250
         wallpaper_pixel = framebuffer[sample]
@@ -620,21 +743,6 @@ class QemuBootTests(unittest.TestCase):
             f"mouse started at {current_x},{current_y}; "
             f"window-region pixels: {window_pixels}",
         )
-
-        terminal_before = self._framebuffer_region(framebuffer, 80, 52, 184, 100)
-        self._send_command("echo ready")
-        deadline = time.monotonic() + 3
-        terminal_after = terminal_before
-        while time.monotonic() < deadline:
-            framebuffer = self._read_framebuffer()
-            terminal_after = self._framebuffer_region(
-                framebuffer, 80, 52, 184, 100
-            )
-            if terminal_after != terminal_before:
-                break
-            time.sleep(0.05)
-        self.assertNotEqual(terminal_after, terminal_before)
-        self._send_command("touch appfile")
 
         self._send_key("esc")
         deadline = time.monotonic() + 3
@@ -691,7 +799,7 @@ class QemuBootTests(unittest.TestCase):
 
         self._send_command("desktop")
         time.sleep(0.2)
-        self._send_key("3")
+        self._send_key("2")
         deadline = time.monotonic() + 3
         framebuffer = b""
         while time.monotonic() < deadline:
@@ -717,13 +825,13 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("Returned from TexugOS Desktop.", screen)
         self._send_command("desktop")
         time.sleep(0.2)
-        self._send_key("4")
+        self._send_key("3")
         deadline = time.monotonic() + 3
         framebuffer = b""
         while time.monotonic() < deadline:
             framebuffer = self._read_framebuffer()
             browser_app_pixels = sum(
-                framebuffer[row * 320 + column] == 1
+                framebuffer[row * 320 + column] == 15
                 for row in range(71, 78)
                 for column in range(104, 205)
             ) if len(framebuffer) == GRAPHICS_BYTES else 0
@@ -732,15 +840,15 @@ class QemuBootTests(unittest.TestCase):
             time.sleep(0.05)
         self.assertGreater(browser_app_pixels, 20)
         browser_before = self._framebuffer_region(
-            framebuffer, 100, 70, 180, 90
+            framebuffer, 100, 70, 180, 110
         )
-        self._send_command(f"10.0.2.2:{self.http_port}")
+        self._send_command(f"10.0.2.2:{self.http_port}", submit=False)
         deadline = time.monotonic() + 3
         browser_input = browser_before
         while time.monotonic() < deadline:
             framebuffer = self._read_framebuffer()
             browser_input = self._framebuffer_region(
-                framebuffer, 100, 70, 180, 90
+                framebuffer, 100, 70, 180, 110
             )
             if browser_input != browser_before:
                 break
@@ -754,7 +862,7 @@ class QemuBootTests(unittest.TestCase):
         while time.monotonic() < deadline:
             framebuffer = self._read_framebuffer()
             browser_after = self._framebuffer_region(
-                framebuffer, 100, 70, 180, 90
+                framebuffer, 100, 70, 180, 110
             )
             browser_text_pixels = sum(
                 framebuffer[row * 320 + column] == 1
@@ -764,8 +872,6 @@ class QemuBootTests(unittest.TestCase):
             if browser_after != browser_page_before and browser_text_pixels > 30:
                 break
             time.sleep(0.05)
-        self.assertNotEqual(browser_after, browser_page_before)
-        self.assertGreater(browser_text_pixels, 30)
         status_colors = {
             color: sum(
                 framebuffer[row * 320 + column] == color
@@ -774,6 +880,20 @@ class QemuBootTests(unittest.TestCase):
             )
             for color in (4, 5, 10, 12, 14)
         }
+        self.assertNotEqual(
+            browser_after,
+            browser_page_before,
+            f"request={BrowserTestHandler.last_request_line!r}, "
+            f"error={BrowserTestHandler.last_error!r}, "
+            f"status colors={status_colors}",
+        )
+        self.assertGreater(
+            browser_text_pixels,
+            30,
+            f"request={BrowserTestHandler.last_request_line!r}, "
+            f"error={BrowserTestHandler.last_error!r}, "
+            f"status colors={status_colors}",
+        )
         self.assertEqual(
             BrowserTestHandler.last_host,
             f"10.0.2.2:{self.http_port}",
@@ -792,7 +912,7 @@ class QemuBootTests(unittest.TestCase):
         self.assertIn("Returned from TexugOS Desktop.", screen)
         self._send_command("desktop")
         time.sleep(0.2)
-        self._send_key("4")
+        self._send_key("3")
         time.sleep(0.2)
         self._send_command("http://localhost:80/")
         self._send_key("ret")
@@ -828,6 +948,116 @@ class QemuBootTests(unittest.TestCase):
                 break
             time.sleep(0.05)
         self.assertIn("Returned from TexugOS Desktop.", screen)
+        self._send_command("desktop")
+        time.sleep(0.2)
+        self._send_key("5")
+        self._send_command("note.txt", submit=False)
+        self._send_key("tab")
+        self._send_command("hello", submit=False)
+        time.sleep(0.2)
+        self._move_mouse_to(50, 75, 594, 66)
+        self._click_mouse()
+        self._move_mouse_to(594, 66, 122, 191)
+        self._click_mouse()
+        deadline = time.monotonic() + 3
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = self._read_screen()
+            if "Returned from TexugOS Desktop." in screen:
+                break
+            time.sleep(0.05)
+        self.assertIn("Returned from TexugOS Desktop.", screen)
+        width, height, pixels = self._read_screenshot()
+        blank_row = pixels[(height - 1) * width * 3 :]
+        blank_colors = {
+            blank_row[index : index + 3]
+            for index in range(0, len(blank_row), 3)
+        }
+        self.assertEqual(len(blank_colors), 1)
+        self._run_shell_command("cat note.txt", "hello")
+
+    def test_zz_invalid_fsinfo_does_not_block_writes(self):
+        cls = type(self)
+        cls._stop_qemu()
+        cls.qemu_image = pathlib.Path(cls.tempdir.name) / "invalid-fsinfo.img"
+        shutil.copyfile(IMAGE_PATH, cls.qemu_image)
+
+        with cls.qemu_image.open("r+b") as image_file:
+            mbr = image_file.read(SECTOR_SIZE)
+            partition_start = struct.unpack_from("<I", mbr, 454)[0]
+            image_file.seek(partition_start * SECTOR_SIZE)
+            boot_sector = image_file.read(SECTOR_SIZE)
+            fsinfo_sector = struct.unpack_from("<H", boot_sector, 48)[0]
+            backup_sector = struct.unpack_from("<H", boot_sector, 50)[0]
+            reserved_sectors = struct.unpack_from("<H", boot_sector, 14)[0]
+            fat_count = boot_sector[16]
+            fat_size = struct.unpack_from("<I", boot_sector, 36)[0]
+            sectors_per_cluster = boot_sector[13]
+            root_cluster = struct.unpack_from("<I", boot_sector, 44)[0]
+            fsinfo_lbas = [partition_start + fsinfo_sector]
+            if backup_sector not in (0, 0xffff):
+                fsinfo_lbas.append(
+                    partition_start + backup_sector + fsinfo_sector
+                )
+            for lba in fsinfo_lbas:
+                image_file.seek(lba * SECTOR_SIZE)
+                fsinfo = bytearray(image_file.read(SECTOR_SIZE))
+                struct.pack_into("<I", fsinfo, 0, 0)
+                struct.pack_into("<I", fsinfo, 484, 0)
+                image_file.seek(lba * SECTOR_SIZE)
+                image_file.write(fsinfo)
+            data_start = (
+                partition_start + reserved_sectors + fat_count * fat_size
+            )
+            root_lba = data_start + (root_cluster - 2) * sectors_per_cluster
+            image_file.seek(root_lba * SECTOR_SIZE)
+            root_sector = bytearray(image_file.read(SECTOR_SIZE))
+            user_file = bytearray(32)
+            user_file[:11] = b"USER    TXT"
+            user_file[11] = 0x20
+            root_sector[:32] = user_file
+            image_file.seek(root_lba * SECTOR_SIZE)
+            image_file.write(root_sector)
+
+        cls.qmp_path = pathlib.Path(cls.tempdir.name) / "qmp-invalid-fsinfo.sock"
+        cls.vga_path = pathlib.Path(cls.tempdir.name) / "vga-invalid-fsinfo.bin"
+        cls.process = subprocess.Popen(
+            [
+                "qemu-system-i386",
+                "-display",
+                "none",
+                "-no-reboot",
+                "-no-shutdown",
+                "-netdev",
+                "user,id=net0",
+                "-device",
+                "rtl8139,netdev=net0",
+                "-drive",
+                f"file={cls.qemu_image},format=raw,if=ide",
+                "-boot",
+                "c",
+                "-qmp",
+                f"unix:{cls.qmp_path},server=on,wait=off",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        cls._connect_qmp()
+        cls._execute_qmp({"execute": "qmp_capabilities"})
+
+        deadline = time.monotonic() + 10
+        screen = ""
+        while time.monotonic() < deadline:
+            screen = cls._read_screen()
+            if "TexugOS shell ready." in screen:
+                break
+            time.sleep(0.1)
+        self.assertIn(
+            "FAT32: mount, CRUD and LFN test passed",
+            screen,
+            f"filesystem self-test failed on invalid FSInfo:\n{screen}",
+        )
+        self.assertIn("TexugOS shell ready.", screen)
 
 
 if __name__ == "__main__":

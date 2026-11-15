@@ -1,5 +1,6 @@
 #include <stdint.h>
 
+#include "console.h"
 #include "frame_allocator.h"
 #include "paging.h"
 #include "user_mode.h"
@@ -20,6 +21,9 @@ extern void user_mode_resume(void) __attribute__((noreturn));
 
 static volatile uint32_t syscall_count;
 static volatile uint32_t test_result;
+static volatile uint32_t fault_vector;
+static volatile uint32_t fault_error_code;
+static volatile uint32_t fault_address;
 
 static void copy_program(uint8_t *destination, const uint8_t *start,
                          const uint8_t *end)
@@ -47,7 +51,9 @@ uint32_t user_mode_handle_syscall(uint32_t number, uint32_t argument)
 
 void user_mode_abort(uint32_t vector, uint32_t error_code)
 {
-    uint32_t fault_address = paging_fault_address();
+    fault_vector = vector;
+    fault_error_code = error_code;
+    fault_address = paging_fault_address();
     test_result = vector == 14u && fault_address == USER_PROBE_ADDRESS &&
                           (error_code & 0x07u) == 0x05u
                       ? 0u
@@ -72,6 +78,7 @@ int user_mode_self_test(void)
         if (stack_frame != FRAME_INVALID) {
             (void)frame_free(stack_frame);
         }
+        console_write("Ring 3: user page allocation failed.\n");
         return 0;
     }
 
@@ -83,22 +90,45 @@ int user_mode_self_test(void)
         (void)paging_set_user_page(stack_frame, 0, 0);
         (void)frame_free(code_frame);
         (void)frame_free(stack_frame);
+        console_write("Ring 3: user page mapping failed.\n");
         return 0;
     }
 
     syscall_count = 0u;
     test_result = 1u;
+    fault_vector = 0u;
+    fault_error_code = 0u;
+    fault_address = 0u;
     user_mode_enter(code_frame,
                     stack_frame + USER_PAGE_SIZE - 16u);
     int passed = syscall_count == 1u && test_result == 0u;
+    if (!passed) {
+        console_write("Ring 3: syscall test failed; calls=");
+        console_write_u32(syscall_count);
+        console_write(", result=0x");
+        console_write_hex32(test_result);
+        console_write("\n");
+    }
 
     if (passed) {
         copy_program(code, user_probe_program_start,
                      user_probe_program_end);
         test_result = 1u;
+        fault_vector = 0u;
+        fault_error_code = 0u;
+        fault_address = 0u;
         user_mode_enter(code_frame,
                         stack_frame + USER_PAGE_SIZE - 16u);
         passed = test_result == 0u;
+        if (!passed) {
+            console_write("Ring 3: isolation test failed; vector=");
+            console_write_u32(fault_vector);
+            console_write(", error=0x");
+            console_write_hex32(fault_error_code);
+            console_write(", CR2=0x");
+            console_write_hex32(fault_address);
+            console_write("\n");
+        }
     }
 
     int code_protected = paging_set_user_page(code_frame, 0, 0);
@@ -107,6 +137,7 @@ int user_mode_self_test(void)
     int stack_released = frame_free(stack_frame);
     if (!code_protected || !stack_protected ||
         !code_released || !stack_released) {
+        console_write("Ring 3: user page cleanup failed.\n");
         return 0;
     }
     return passed;

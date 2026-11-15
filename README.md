@@ -51,8 +51,8 @@ status and sends keyboard and mouse input to exercise shell commands, PCI
 device listing, FAT32 short and long filename CRUD, directory navigation, and
 PS/2 mouse packet handling.
 It also verifies the 320×200 VGA desktop, opens and closes a window using the
-mouse, exercises the graphical terminal and FAT32 file browser, checks the
-system-information app, starts the native raycasting arena, verifies enemy
+mouse, exercises the FAT32 file browser and system-information app, starts the
+native raycasting arena, verifies enemy
 pursuit and tests its shooting and mouse-aim controls, obtains a DHCP lease,
 pings the QEMU network gateway,
 resolves `localhost` through the DHCP-provided DNS server,
@@ -76,9 +76,9 @@ are claimed or included.
   PCI enumeration, PS/2 keyboard-driven shell and mouse input, and a
   320×200 VGA desktop with clickable icons, a taskbar, pointer, and
   movable/resizable/minimizable/maximizable windows. The desktop includes
-  kernel-integrated Files, Terminal, and System Information apps; redraws are
-  limited to 50 Hz while input continues to be processed each loop. The
-  terminal supports basic FAT32 and system commands. Networking has a polled
+  kernel-integrated Files, System Information, browser, game, and Notepad apps;
+  redraws are limited to 50 Hz while input continues to be processed each loop.
+  The shell is available from the desktop taskbar. Networking has a polled
   RTL8139 driver, DHCP configuration, ARP, IPv4 ICMP echo, and `net`, `dhcp`,
   `dns` A-record lookup and `ping` shell commands. A text browser can fetch
   HTTP/1.0 pages using IPv4 addresses or DNS names over a minimal TCP client.
@@ -103,6 +103,9 @@ are claimed or included.
   generated 8.3 aliases; Unicode names are not supported.
 - Not yet implemented: AHCI/SATA hardware verification, a full-featured
   browser, or user-mode application processes.
+- If no ATA PIO disk or FAT32 volume is available, the kernel continues to the
+  shell and desktop without filesystem storage. AHCI controllers and the
+  notebook's network adapter are not supported by the current drivers.
 - The QEMU smoke test confirms boot in emulation; physical hardware has not
   been tested.
 - The ISO boots through BIOS El Torito hard-disk emulation; the kernel's ATA

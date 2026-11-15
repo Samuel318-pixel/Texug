@@ -12,6 +12,8 @@
 #define TASKBAR_Y 184
 #define WINDOW_MIN_WIDTH 112u
 #define WINDOW_MIN_HEIGHT 72u
+#define WINDOW_DEFAULT_WIDTH 248u
+#define WINDOW_DEFAULT_HEIGHT 138u
 #define DESKTOP_RENDER_INTERVAL_TICKS 2u
 
 struct desktop_window {
@@ -31,11 +33,15 @@ enum drag_mode {
 };
 
 static const char *const window_titles[WINDOW_COUNT] = {
-    "FILES", "TERMINAL", "SETTINGS", "BROWSER", "ARENA",
+    "FILES", "SETTINGS", "BROWSER", "ARENA", "NOTEPAD",
+};
+static const char *const task_titles[WINDOW_COUNT] = {
+    "FILE", "SET", "WEB", "GAME", "NOTE",
 };
 static struct desktop_window windows[WINDOW_COUNT];
 static int32_t active_window = -1;
 static uint8_t menu_open;
+static uint8_t return_to_shell_requested;
 static enum drag_mode dragging;
 static int32_t drag_offset_x;
 static int32_t drag_offset_y;
@@ -53,48 +59,74 @@ static int32_t clamp(int32_t value, int32_t minimum, int32_t maximum)
 
 static void draw_icon(uint32_t index)
 {
-    int32_t x = 14;
-    int32_t y = 22 + (int32_t)index * 48;
-    uint8_t color = index == 0u ? 14u :
-                    (index == 1u ? 11u : (index == 2u ? 10u : 4u));
-    video_fill_rect(x, y, 22u, 20u, 15u);
-    video_fill_rect(x + 2, y + 2, 18u, 16u, color);
+    int32_t tile_x = 8 + (int32_t)(index % 2u) * 72;
+    int32_t y = 16 + (int32_t)(index / 2u) * 53;
+    int32_t icon_x = tile_x + 18;
+    video_fill_rect(icon_x + 2, y + 4, 28u, 22u, 8u);
+
     if (index == 0u) {
-        video_fill_rect(x + 5, y + 6, 12u, 9u, 15u);
-        video_fill_rect(x + 5, y + 5, 6u, 2u, 15u);
+        video_fill_rect(icon_x + 4, y + 7, 13u, 5u, 14u);
+        video_fill_rect(icon_x + 2, y + 11, 28u, 14u, 6u);
+        video_fill_rect(icon_x + 8, y + 8, 17u, 15u, 15u);
+        video_fill_rect(icon_x + 10, y + 11, 12u, 1u, 9u);
+        video_fill_rect(icon_x + 10, y + 14, 10u, 1u, 9u);
+        video_fill_rect(icon_x + 2, y + 18, 28u, 7u, 14u);
+        video_fill_rect(icon_x + 3, y + 18, 26u, 1u, 15u);
     } else if (index == 1u) {
-        video_fill_rect(x + 5, y + 5, 12u, 10u, 1u);
-        video_fill_rect(x + 7, y + 7, 8u, 1u, 15u);
-        video_fill_rect(x + 7, y + 10, 6u, 1u, 15u);
+        video_fill_rect(icon_x + 13, y + 3, 6u, 5u, 7u);
+        video_fill_rect(icon_x + 13, y + 21, 6u, 5u, 7u);
+        video_fill_rect(icon_x + 3, y + 12, 5u, 6u, 7u);
+        video_fill_rect(icon_x + 24, y + 12, 5u, 6u, 7u);
+        video_fill_circle(icon_x + 16, y + 15, 12u, 0u);
+        video_fill_circle(icon_x + 16, y + 15, 9u, 7u);
+        video_fill_rect(icon_x + 15, y + 5, 3u, 20u, 7u);
+        video_fill_rect(icon_x + 6, y + 14, 20u, 3u, 7u);
+        video_fill_circle(icon_x + 16, y + 15, 4u, 0u);
+        video_fill_circle(icon_x + 16, y + 15, 2u, 11u);
     } else if (index == 2u) {
-        video_fill_rect(x + 6, y + 4, 10u, 12u, 15u);
-        video_fill_rect(x + 9, y + 7, 4u, 6u, color);
+        video_fill_circle(icon_x + 16, y + 15, 13u, 0u);
+        video_fill_circle(icon_x + 16, y + 15, 11u, 9u);
+        video_fill_rect(icon_x + 6, y + 10, 20u, 1u, 15u);
+        video_fill_rect(icon_x + 5, y + 14, 22u, 2u, 15u);
+        video_fill_rect(icon_x + 7, y + 19, 18u, 1u, 15u);
+        video_fill_rect(icon_x + 15, y + 5, 2u, 20u, 15u);
+        video_fill_rect(icon_x + 10, y + 7, 2u, 4u, 10u);
+        video_fill_rect(icon_x + 21, y + 18, 3u, 4u, 10u);
     } else if (index == 3u) {
-        video_fill_rect(x + 5, y + 3, 12u, 14u, 15u);
-        video_fill_rect(x + 7, y + 5, 8u, 2u, color);
-        video_fill_rect(x + 7, y + 9, 8u, 1u, color);
-        video_fill_rect(x + 7, y + 12, 6u, 1u, color);
+        video_fill_circle(icon_x + 8, y + 16, 8u, 0u);
+        video_fill_circle(icon_x + 24, y + 16, 8u, 0u);
+        video_fill_rect(icon_x + 8, y + 8, 16u, 17u, 0u);
+        video_fill_circle(icon_x + 8, y + 16, 6u, 7u);
+        video_fill_circle(icon_x + 24, y + 16, 6u, 7u);
+        video_fill_rect(icon_x + 8, y + 10, 16u, 13u, 7u);
+        video_fill_rect(icon_x + 5, y + 15, 7u, 2u, 15u);
+        video_fill_rect(icon_x + 8, y + 12, 2u, 8u, 15u);
+        video_fill_circle(icon_x + 23, y + 14, 2u, 4u);
+        video_fill_circle(icon_x + 27, y + 18, 2u, 14u);
     } else {
-        video_fill_rect(x + 5, y + 5, 12u, 10u, 4u);
-        video_fill_rect(x + 9, y + 3, 4u, 14u, 15u);
-        video_fill_rect(x + 3, y + 8, 16u, 4u, 15u);
+        video_fill_rect(icon_x + 6, y + 3, 21u, 24u, 0u);
+        video_fill_rect(icon_x + 8, y + 4, 17u, 21u, 15u);
+        video_fill_rect(icon_x + 11, y + 8, 11u, 1u, 9u);
+        video_fill_rect(icon_x + 11, y + 12, 11u, 1u, 9u);
+        video_fill_rect(icon_x + 11, y + 16, 8u, 1u, 9u);
+        video_fill_rect(icon_x + 20, y + 18, 8u, 3u, 4u);
+        video_fill_rect(icon_x + 24, y + 14, 3u, 8u, 4u);
     }
 
-    video_draw_text(6, y + 23, window_titles[index], 15u);
+    video_draw_text(tile_x + 4, y + 34, window_titles[index], 15u);
 }
 
 static void draw_wallpaper(void)
 {
-    video_clear(1u);
-    for (uint32_t y = 0; y < (uint32_t)TASKBAR_Y; ++y) {
-        uint8_t color = y < 70u ? 1u : (y < 132u ? 9u : 1u);
+    for (uint32_t y = 0u; y < (uint32_t)TASKBAR_Y; ++y) {
+        uint8_t color = y < 42u ? 2u :
+                        (y < 90u ? 1u : (y < 138u ? 2u : 3u));
         video_fill_rect(0, (int32_t)y, VIDEO_WIDTH, 1u, color);
     }
-    video_fill_rect(176, 20, 118u, 118u, 9u);
-    video_fill_rect(188, 32, 118u, 118u, 11u);
-    video_fill_rect(200, 44, 118u, 118u, 1u);
-    video_fill_rect(214, 58, 84u, 84u, 11u);
-    video_fill_rect(228, 72, 56u, 56u, 9u);
+    video_fill_circle(258, 81, 43u, 9u);
+    video_fill_circle(258, 81, 34u, 11u);
+    video_fill_circle(258, 81, 24u, 2u);
+    video_fill_circle(258, 81, 13u, 9u);
 
     for (uint32_t index = 0; index < WINDOW_COUNT; ++index) {
         draw_icon(index);
@@ -102,16 +134,16 @@ static void draw_wallpaper(void)
 
     video_fill_rect(0, TASKBAR_Y, VIDEO_WIDTH, VIDEO_HEIGHT - TASKBAR_Y, 0u);
     video_fill_rect(0, TASKBAR_Y, VIDEO_WIDTH, 1u, 8u);
-    video_fill_rect(5, TASKBAR_Y + 3, 47u, 11u, 9u);
-    video_draw_text(10, TASKBAR_Y + 5, "START", 15u);
+    video_draw_button(5, TASKBAR_Y + 2, 34u, 14u, "MENU", 9u, 15u);
+    video_draw_button(42, TASKBAR_Y + 2, 38u, 14u, "SHELL", 2u, 15u);
 
     for (uint32_t index = 0; index < WINDOW_COUNT; ++index) {
         if (windows[index].open && !windows[index].minimized) {
-            int32_t button_x = 57 + (int32_t)index * 52;
-            video_fill_rect(button_x, TASKBAR_Y + 3, 48u, 11u,
-                            (int32_t)index == active_window ? 9u : 8u);
-            video_draw_text(button_x + 4, TASKBAR_Y + 5,
-                            window_titles[index], 15u);
+            int32_t button_x = 84 + (int32_t)index * 32;
+            video_draw_button(button_x, TASKBAR_Y + 2, 30u, 14u,
+                              task_titles[index],
+                              (int32_t)index == active_window ? 9u : 2u,
+                              15u);
         }
     }
 
@@ -138,19 +170,27 @@ static void draw_window(uint32_t index)
     int32_t y = window->y;
     uint32_t width = window->width;
     uint32_t height = window->height;
-    uint8_t title_color = (int32_t)index == active_window ? 9u : 8u;
+    uint8_t title_color = (int32_t)index == active_window ? 9u : 2u;
 
-    video_fill_rect(x, y, width, height, 15u);
+    video_fill_rect(x + 2, y + 2, width, height, 0u);
+    video_fill_rect(x, y, width, height, 8u);
     video_fill_rect(x + 1, y + 1, width - 2u, height - 2u, 7u);
     video_fill_rect(x + 2, y + 2, width - 4u, 13u, title_color);
-    video_draw_text(x + 6, y + 5, window_titles[index], 15u);
+    video_fill_rect(x + 2, y + 14, width - 4u, 1u, 11u);
+    video_draw_text(x + 7, y + 5, window_titles[index], 15u);
 
-    video_fill_rect(x + (int32_t)width - 34, y + 4, 8u, 8u, 8u);
-    video_fill_rect(x + (int32_t)width - 32, y + 8, 4u, 1u, 15u);
-    video_fill_rect(x + (int32_t)width - 23, y + 4, 8u, 8u, 8u);
-    video_fill_rect(x + (int32_t)width - 21, y + 6, 4u, 4u, 15u);
-    video_fill_rect(x + (int32_t)width - 12, y + 4, 8u, 8u, 4u);
-    video_draw_text(x + (int32_t)width - 11, y + 5, "X", 15u);
+    video_draw_button(x + (int32_t)width - 36, y + 3, 10u, 9u, "", 2u, 15u);
+    video_fill_rect(x + (int32_t)width - 34, y + 9, 6u, 1u, 15u);
+    video_draw_button(x + (int32_t)width - 24, y + 3, 10u, 9u, "", 2u, 15u);
+    video_fill_rect(x + (int32_t)width - 21, y + 5, 4u, 4u, 15u);
+    int32_t close_x = x + (int32_t)width - 12;
+    video_draw_button(close_x, y + 3, 10u, 9u, "", 4u, 15u);
+    for (uint32_t offset = 0u; offset < 5u; ++offset) {
+        video_fill_rect(close_x + 2 + (int32_t)offset,
+                        y + 5 + (int32_t)offset, 1u, 1u, 15u);
+        video_fill_rect(close_x + 6 - (int32_t)offset,
+                        y + 5 + (int32_t)offset, 1u, 1u, 15u);
+    }
 
     video_fill_rect(x + 3, y + 17, width - 6u, height - 20u, 15u);
     desktop_app_draw(index, x + 3, y + 17, width - 6u, height - 20u);
@@ -163,29 +203,60 @@ static void draw_start_menu(void)
     if (!menu_open) {
         return;
     }
-    video_fill_rect(4, 79, 116u, 103u, 15u);
-    video_fill_rect(6, 81, 112u, 99u, 1u);
-    video_draw_text(13, 85, "TEXUGOS", 15u);
-    video_draw_text(13, 100, "FILES", 15u);
-    video_draw_text(13, 115, "TERMINAL", 15u);
-    video_draw_text(13, 130, "SETTINGS", 15u);
-    video_draw_text(13, 145, "BROWSER", 15u);
-    video_draw_text(13, 160, "ARENA", 15u);
+    video_fill_rect(4, 48, 136u, 134u, 0u);
+    video_fill_rect(5, 49, 132u, 130u, 2u);
+    video_draw_text(12, 54, "TEXUGOS", 11u);
+    for (uint32_t index = 0u; index < WINDOW_COUNT; ++index) {
+        video_draw_button(8, 66 + (int32_t)index * 16, 124u, 14u,
+                          window_titles[index], 2u, 15u);
+    }
+    video_draw_button(8, 164, 124u, 14u, "RETURN TO SHELL", 9u, 15u);
 }
 
 static void draw_cursor(uint32_t x, uint32_t y)
 {
-    static const uint8_t shape[12][2] = {
-        {0, 0}, {0, 1}, {0, 2}, {0, 3}, {0, 4}, {0, 5},
-        {1, 5}, {2, 6}, {3, 7}, {4, 8}, {2, 5}, {1, 4},
+    static const uint16_t shape[16] = {
+        0x800u, 0xc00u, 0xe00u, 0xf00u, 0xf80u, 0xfc0u, 0xfe0u, 0xff0u,
+        0xff8u, 0xffcu, 0xfe0u, 0xce0u, 0x8e0u, 0x060u, 0x070u, 0x0e0u,
     };
-    for (uint32_t index = 0; index < 12u; ++index) {
-        video_fill_rect((int32_t)x + shape[index][0],
-                        (int32_t)y + shape[index][1], 1u, 1u, 0u);
+    for (uint32_t row = 0u; row < 16u; ++row) {
+        for (uint32_t column = 0u; column < 12u; ++column) {
+            if ((shape[row] & (0x800u >> column)) != 0u) {
+                video_fill_rect((int32_t)x + (int32_t)column + 1,
+                                (int32_t)y + (int32_t)row + 1, 1u, 1u, 8u);
+            }
+        }
     }
-    for (uint32_t index = 0; index < 6u; ++index) {
-        video_fill_rect((int32_t)x + (int32_t)index,
-                        (int32_t)y + (int32_t)index, 1u, 1u, 15u);
+    for (uint32_t row = 0u; row < 16u; ++row) {
+        for (uint32_t column = 0u; column < 12u; ++column) {
+            if ((shape[row] & (0x800u >> column)) != 0u) {
+                int has_neighbor = row > 0u && row < 15u && column > 0u &&
+                    column < 11u &&
+                    (shape[row - 1u] & (0x800u >> column)) != 0u &&
+                    (shape[row + 1u] & (0x800u >> column)) != 0u &&
+                    (shape[row] & (0x800u >> (column - 1u))) != 0u &&
+                    (shape[row] & (0x800u >> (column + 1u))) != 0u;
+                uint8_t color = has_neighbor ? 15u : 0u;
+                if (has_neighbor && row >= 7u && column >= 6u) {
+                    color = 11u;
+                }
+                video_fill_rect((int32_t)x + (int32_t)column,
+                                (int32_t)y + (int32_t)row, 1u, 1u,
+                                color);
+            }
+        }
+    }
+}
+
+static void set_default_window(uint32_t index,
+                               struct desktop_window *window)
+{
+    window->x = 32 + (int32_t)index * 8;
+    window->y = 28 + (int32_t)index * 7;
+    window->width = WINDOW_DEFAULT_WIDTH;
+    window->height = WINDOW_DEFAULT_HEIGHT;
+    if (window->y + (int32_t)window->height > TASKBAR_Y) {
+        window->y = TASKBAR_Y - (int32_t)window->height;
     }
 }
 
@@ -213,13 +284,7 @@ static void open_window(uint32_t index)
     window->open = 1u;
     window->minimized = 0u;
     if (!window->maximized) {
-        window->x = 72 + (int32_t)index * 8;
-        window->y = 28 + (int32_t)index * 7;
-        window->width = 192u;
-        window->height = 138u;
-        if (window->y + (int32_t)window->height > TASKBAR_Y) {
-            window->y = TASKBAR_Y - (int32_t)window->height;
-        }
+        set_default_window(index, window);
     }
     active_window = (int32_t)index;
     menu_open = 0u;
@@ -227,22 +292,30 @@ static void open_window(uint32_t index)
 
 static void handle_click(uint32_t x, uint32_t y)
 {
-    if (y >= (uint32_t)TASKBAR_Y && x >= 5u && x < 52u) {
+    if (y >= (uint32_t)TASKBAR_Y && x >= 5u && x < 40u) {
         menu_open ^= 1u;
         return;
     }
-    if (menu_open && x < 120u && y >= 98u && y < 173u) {
-        open_window((y - 98u) / 15u);
+    if (y >= (uint32_t)TASKBAR_Y && x >= 42u && x < 81u) {
+        return_to_shell_requested = 1u;
+        return;
+    }
+    if (menu_open && x >= 8u && x < 132u) {
+        if (y >= 66u && y < 146u) {
+            open_window((y - 66u) / 16u);
+        } else if (y >= 164u && y < 180u) {
+            return_to_shell_requested = 1u;
+        }
         return;
     }
 
-    if (x < 64u) {
-        for (uint32_t index = 0; index < WINDOW_COUNT; ++index) {
-            uint32_t top = 18u + index * 48u;
-            if (y >= top && y < top + 36u) {
-                open_window(index);
-                return;
-            }
+    if (x >= 8u && x < 148u && y >= 14u && y < 173u) {
+        uint32_t column = x < 76u ? 0u : 1u;
+        uint32_t row = (y - 14u) / 53u;
+        uint32_t index = row * 2u + column;
+        if (index < WINDOW_COUNT) {
+            open_window(index);
+            return;
         }
     }
 
@@ -269,10 +342,7 @@ static void handle_click(uint32_t x, uint32_t y)
                 window->width = VIDEO_WIDTH;
                 window->height = 166u;
             } else {
-                window->x = 72;
-                window->y = 28;
-                window->width = 192u;
-                window->height = 138u;
+                set_default_window(index, window);
             }
         } else if (local_y < 15 &&
                    local_x >= (int32_t)window->width - 36) {
@@ -288,13 +358,15 @@ static void handle_click(uint32_t x, uint32_t y)
             drag_offset_x = (int32_t)x;
             drag_offset_y = (int32_t)y;
         } else {
-            desktop_app_handle_click(index, local_x, local_y);
+            desktop_app_handle_click(index, local_x, local_y,
+                                     window->width, window->height);
         }
         return;
     }
 
     if (y >= (uint32_t)TASKBAR_Y) {
-        uint32_t index = x >= 57u ? (x - 57u) / 52u : WINDOW_COUNT;
+        uint32_t index = x >= 84u && x < 276u
+                             ? (x - 84u) / 32u : WINDOW_COUNT;
         if (index < WINDOW_COUNT && windows[index].open) {
             windows[index].minimized = 0u;
             active_window = (int32_t)index;
@@ -328,6 +400,13 @@ static void update_drag(uint32_t x, uint32_t y, uint32_t buttons)
     }
 }
 
+static void exit_to_shell(void)
+{
+    (void)video_set_text_mode();
+    console_clear();
+    console_write("Returned from TexugOS Desktop.\n");
+}
+
 void desktop_run(void)
 {
     for (uint32_t index = 0; index < WINDOW_COUNT; ++index) {
@@ -335,6 +414,7 @@ void desktop_run(void)
     }
     active_window = -1;
     menu_open = 0u;
+    return_to_shell_requested = 0u;
     dragging = DRAG_NONE;
     desktop_apps_initialize();
     if (!video_set_graphics_mode()) {
@@ -349,7 +429,8 @@ void desktop_run(void)
     for (;;) {
         struct mouse_state mouse;
         mouse_get_state(&mouse);
-        uint32_t mouse_x = mouse.x / 2u;
+        uint32_t mouse_x =
+            mouse.x * desktop_app_mouse_sensitivity() / 2u;
         uint32_t mouse_y = mouse.y;
         if (mouse_x >= VIDEO_WIDTH) {
             mouse_x = VIDEO_WIDTH - 1u;
@@ -360,9 +441,7 @@ void desktop_run(void)
         char key;
         while (keyboard_read_character(&key)) {
             if ((uint8_t)key == 0x1bu) {
-                (void)video_set_text_mode();
-                console_clear();
-                console_write("Returned from TexugOS Desktop.\n");
+                exit_to_shell();
                 return;
             }
             if (active_window >= 0 &&
@@ -379,7 +458,13 @@ void desktop_run(void)
                 open_window(3u);
             } else if (key == '5') {
                 open_window(4u);
+            } else if (key == '0') {
+                return_to_shell_requested = 1u;
             }
+        }
+        if (return_to_shell_requested != 0u) {
+            exit_to_shell();
+            return;
         }
 
         if ((mouse.buttons & 1u) != 0u &&
@@ -387,9 +472,13 @@ void desktop_run(void)
             handle_click(mouse_x, mouse_y);
         }
         update_drag(mouse_x, mouse_y, mouse.buttons);
+        if (return_to_shell_requested != 0u) {
+            exit_to_shell();
+            return;
+        }
         int32_t mouse_delta_x = (int32_t)mouse_x - (int32_t)previous_mouse_x;
-        if (active_window == 4) {
-            desktop_app_handle_mouse(4u, mouse_delta_x);
+        if (active_window == 3) {
+            desktop_app_handle_mouse(3u, mouse_delta_x);
         }
         previous_mouse_x = mouse_x;
         previous_buttons = mouse.buttons;

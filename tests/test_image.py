@@ -1,8 +1,9 @@
+import os
 import pathlib
 import struct
 import unittest
 
-IMAGE_PATH = pathlib.Path("build/texugos.img")
+IMAGE_PATH = pathlib.Path(os.environ.get("TEXUGOS_IMAGE", "build/texugos.img"))
 SECTOR_SIZE = 512
 BOOT_PAYLOAD_SECTORS = 120
 

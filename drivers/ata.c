@@ -162,6 +162,11 @@ const char *ata_model(void)
     return disk_model;
 }
 
+uint32_t ata_sector_count(void)
+{
+    return disk_present ? sector_count : 0u;
+}
+
 static int select_sector(uint32_t lba, uint8_t command)
 {
     if (!disk_present || lba >= sector_count || lba >= 0x10000000u) {

@@ -8,6 +8,7 @@ user_mode_enter:
     movl %esp, user_mode_kernel_esp
     pushfl
     popl %eax
+    andl $0xffffbfff, %eax
     movl %eax, user_mode_kernel_eflags
     movl %ebx, user_mode_kernel_ebx
     movl %esi, user_mode_kernel_esi
@@ -17,10 +18,7 @@ user_mode_enter:
     movl 8(%esp), %edx
     pushl $0x23
     pushl %edx
-    pushfl
-    popl %ecx
-    orl $0x200, %ecx
-    pushl %ecx
+    pushl $0x202
     pushl $0x1b
     pushl %eax
     iret

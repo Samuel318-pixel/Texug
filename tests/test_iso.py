@@ -9,8 +9,12 @@ import tempfile
 import time
 import unittest
 
-ISO_PATH = pathlib.Path("build/texugos.iso").resolve()
-DISK_PATH = pathlib.Path("build/texugos.img").resolve()
+ISO_PATH = pathlib.Path(
+    os.environ.get("TEXUGOS_ISO", "build/texugos.iso")
+).resolve()
+DISK_PATH = pathlib.Path(
+    os.environ.get("TEXUGOS_IMAGE", "build/texugos.img")
+).resolve()
 VGA_BYTES = 80 * 25 * 2
 
 

@@ -5,7 +5,7 @@
 #include "video.h"
 
 #define MAP_SIZE 10u
-#define RAY_COUNT 64u
+#define RAY_COUNT 128u
 #define MAX_RAY_STEPS 192u
 #define ENEMY_COUNT 2u
 #define LEVEL_COUNT 2u
@@ -69,36 +69,51 @@ static uint32_t next_attack_tick;
 static uint32_t next_enemy_move_tick;
 static char last_action[12];
 
+static int32_t sine_value(uint8_t offset)
+{
+    uint32_t index = offset >> 2;
+    uint32_t fraction = offset & 3u;
+    if (index >= 16u) {
+        return sine_quarter[16];
+    }
+    return ((4u - fraction) * (uint32_t)sine_quarter[index] +
+            fraction * (uint32_t)sine_quarter[index + 1u]) / 4u;
+}
+
 static int32_t direction_x(uint8_t angle)
 {
-    uint8_t quadrant = angle >> 4;
-    uint8_t offset = angle & 15u;
+    uint8_t quadrant = angle >> 6;
+    uint8_t offset = angle & 63u;
+    int32_t sine = sine_value(offset);
+    int32_t cosine = sine_value((uint8_t)(64u - offset));
     if (quadrant == 0u) {
-        return sine_quarter[16u - offset];
+        return cosine;
     }
     if (quadrant == 1u) {
-        return -(int32_t)sine_quarter[offset];
+        return -sine;
     }
     if (quadrant == 2u) {
-        return -(int32_t)sine_quarter[16u - offset];
+        return -cosine;
     }
-    return sine_quarter[offset];
+    return sine;
 }
 
 static int32_t direction_y(uint8_t angle)
 {
-    uint8_t quadrant = angle >> 4;
-    uint8_t offset = angle & 15u;
+    uint8_t quadrant = angle >> 6;
+    uint8_t offset = angle & 63u;
+    int32_t sine = sine_value(offset);
+    int32_t cosine = sine_value((uint8_t)(64u - offset));
     if (quadrant == 0u) {
-        return sine_quarter[offset];
+        return sine;
     }
     if (quadrant == 1u) {
-        return sine_quarter[16u - offset];
+        return cosine;
     }
     if (quadrant == 2u) {
-        return -(int32_t)sine_quarter[offset];
+        return -sine;
     }
-    return -(int32_t)sine_quarter[16u - offset];
+    return -cosine;
 }
 
 static uint32_t divide_u32(uint32_t numerator, uint32_t denominator)
@@ -401,9 +416,9 @@ void arena_handle_key(char key)
     } else if (key == 'd' || key == 'D') {
         move_player(side_x, side_y);
     } else if (key == 'q' || key == 'Q') {
-        player_direction = (uint8_t)((player_direction - 1u) & 63u);
+        player_direction = (uint8_t)(player_direction - 4u);
     } else if (key == 'e' || key == 'E') {
-        player_direction = (uint8_t)((player_direction + 1u) & 63u);
+        player_direction = (uint8_t)(player_direction + 4u);
     } else if (key == 'f' || key == 'F' || key == ' ') {
         arena_fire();
     } else if (key == 'r' || key == 'R') {
@@ -419,11 +434,11 @@ void arena_handle_mouse(int32_t delta_x)
     }
     mouse_turn_remainder += delta_x;
     while (mouse_turn_remainder >= 4) {
-        player_direction = (uint8_t)((player_direction + 1u) & 63u);
+        player_direction = (uint8_t)(player_direction + 4u);
         mouse_turn_remainder -= 4;
     }
     while (mouse_turn_remainder <= -4) {
-        player_direction = (uint8_t)((player_direction - 1u) & 63u);
+        player_direction = (uint8_t)(player_direction - 4u);
         mouse_turn_remainder += 4;
     }
 }
@@ -491,8 +506,9 @@ void arena_draw(int32_t x, int32_t y, uint32_t width, uint32_t height)
                     view_height - horizon, 8u);
 
     for (uint32_t column = 0u; column < RAY_COUNT; ++column) {
-        int32_t angle_offset = (int32_t)(column >> 2) - 8;
-        uint8_t angle = (uint8_t)((player_direction + angle_offset) & 63);
+        int32_t angle_offset =
+            (int32_t)(column * 64u / RAY_COUNT) - 32;
+        uint8_t angle = (uint8_t)((int32_t)player_direction + angle_offset);
         int32_t ray_x = player_x;
         int32_t ray_y = player_y;
         int32_t step_x = direction_x(angle);

@@ -13,9 +13,9 @@
 #define APP_COUNT 5u
 #define FILE_CAPACITY 64u
 #define FILE_PREVIEW_SIZE 256u
-#define TERMINAL_ROWS 6u
-#define TERMINAL_LINE_SIZE 28u
-#define TERMINAL_INPUT_SIZE 40u
+#define NOTEPAD_NAME_SIZE 48u
+#define NOTEPAD_TEXT_SIZE 512u
+#define STATUS_TEXT_SIZE 28u
 #define BROWSER_RESPONSE_SIZE 768u
 #define BROWSER_LINE_COUNT 6u
 #define BROWSER_LINE_SIZE 28u
@@ -31,17 +31,21 @@ static uint32_t file_entry_count;
 static uint8_t file_list_valid;
 static uint8_t file_list_dirty;
 
-static char terminal_lines[TERMINAL_ROWS][TERMINAL_LINE_SIZE];
-static uint32_t terminal_line_count;
-static char terminal_input[TERMINAL_INPUT_SIZE];
-static uint32_t terminal_input_length;
-static struct fat32_entry terminal_entries[FILE_CAPACITY];
+static char notepad_name[NOTEPAD_NAME_SIZE];
+static uint32_t notepad_name_length;
+static char notepad_text[NOTEPAD_TEXT_SIZE];
+static uint32_t notepad_text_length;
+static uint8_t notepad_name_focused;
+static char notepad_status[STATUS_TEXT_SIZE];
+static uint8_t notepad_status_color;
+
 static char browser_input[BROWSER_INPUT_SIZE];
 static uint32_t browser_input_length;
 static char browser_lines[BROWSER_LINE_COUNT][BROWSER_LINE_SIZE];
 static uint32_t browser_line_count;
 static char browser_status[BROWSER_LINE_SIZE];
 static uint8_t browser_status_color;
+static uint8_t mouse_speed_fast;
 
 static uint32_t text_length(const char *text)
 {
@@ -76,19 +80,10 @@ static void append_u32(char *buffer, uint32_t value)
     } while (value != 0u);
 
     uint32_t length = text_length(buffer);
-    while (count != 0u && length + 1u < TERMINAL_LINE_SIZE) {
+    while (count != 0u && length + 1u < STATUS_TEXT_SIZE) {
         buffer[length++] = digits[--count];
     }
     buffer[length] = '\0';
-}
-
-static int text_equal(const char *left, const char *right)
-{
-    while (*left != '\0' && *left == *right) {
-        ++left;
-        ++right;
-    }
-    return *left == '\0' && *right == '\0';
 }
 
 static int text_starts_with(const char *text, const char *prefix)
@@ -99,140 +94,6 @@ static int text_starts_with(const char *text, const char *prefix)
         }
     }
     return 1;
-}
-
-static void terminal_clear_lines(void)
-{
-    terminal_line_count = 0u;
-    for (uint32_t row = 0; row < TERMINAL_ROWS; ++row) {
-        terminal_lines[row][0] = '\0';
-    }
-}
-
-static void terminal_add_line(const char *text)
-{
-    if (terminal_line_count == TERMINAL_ROWS) {
-        for (uint32_t row = 1u; row < TERMINAL_ROWS; ++row) {
-            text_copy(terminal_lines[row - 1u], terminal_lines[row],
-                      TERMINAL_LINE_SIZE);
-        }
-        terminal_line_count = TERMINAL_ROWS - 1u;
-    }
-    text_copy(terminal_lines[terminal_line_count], text,
-              TERMINAL_LINE_SIZE);
-    ++terminal_line_count;
-}
-
-static void terminal_add_entry_list(void)
-{
-    uint32_t count = 0u;
-    if (!fat32_list(fat32_root_cluster(), terminal_entries, FILE_CAPACITY,
-                    &count)) {
-        terminal_add_line("DIRECTORY LIST FAILED");
-        return;
-    }
-    if (count == 0u) {
-        terminal_add_line("EMPTY");
-        return;
-    }
-    for (uint32_t index = 0u; index < count; ++index) {
-        terminal_add_line(terminal_entries[index].name);
-    }
-}
-
-static void terminal_add_file(const char *name)
-{
-    char contents[FILE_PREVIEW_SIZE + 1u];
-    uint32_t size = 0u;
-    if (!fat32_read_file(fat32_root_cluster(), name, contents,
-                         FILE_PREVIEW_SIZE, &size)) {
-        terminal_add_line("FILE READ FAILED");
-        return;
-    }
-    contents[size] = '\0';
-    if (size == 0u) {
-        terminal_add_line("EMPTY FILE");
-        return;
-    }
-
-    char line[TERMINAL_LINE_SIZE];
-    uint32_t length = 0u;
-    for (uint32_t index = 0u; index < size; ++index) {
-        char character = contents[index];
-        if (character == '\n' || length + 1u == TERMINAL_LINE_SIZE) {
-            line[length] = '\0';
-            terminal_add_line(line);
-            length = 0u;
-            if (character == '\n') {
-                continue;
-            }
-        }
-        if (character >= ' ' && character <= '~') {
-            line[length++] = character;
-        }
-    }
-    if (length != 0u) {
-        line[length] = '\0';
-        terminal_add_line(line);
-    }
-}
-
-static void terminal_execute(void)
-{
-    char command_line[TERMINAL_INPUT_SIZE];
-    char echo_line[TERMINAL_LINE_SIZE];
-    text_copy(command_line, terminal_input, sizeof(command_line));
-    echo_line[0] = '>';
-    echo_line[1] = ' ';
-    text_copy(&echo_line[2], command_line, sizeof(echo_line) - 2u);
-    terminal_add_line(echo_line);
-
-    if (text_equal(command_line, "help")) {
-        terminal_add_line("HELP LS CAT ECHO");
-        terminal_add_line("TOUCH MKDIR RM");
-    } else if (text_equal(command_line, "ls")) {
-        terminal_add_entry_list();
-    } else if (text_equal(command_line, "memory")) {
-        char line[TERMINAL_LINE_SIZE] = "FREE FRAMES ";
-        append_u32(line, frame_free_count());
-        terminal_add_line(line);
-    } else if (text_equal(command_line, "version")) {
-        terminal_add_line("TEXUGOS VERSION 0.1.0");
-    } else if (text_equal(command_line, "clear")) {
-        terminal_clear_lines();
-    } else if (text_starts_with(command_line, "echo ")) {
-        terminal_add_line(command_line + 5);
-    } else if (text_starts_with(command_line, "cat ")) {
-        terminal_add_file(command_line + 4);
-    } else if (text_starts_with(command_line, "touch ")) {
-        if (fat32_write_file(fat32_root_cluster(), command_line + 6,
-                             "", 0u)) {
-            file_list_dirty = 1u;
-            terminal_add_line("FILE CREATED");
-        } else {
-            terminal_add_line("FILE CREATE FAILED");
-        }
-    } else if (text_starts_with(command_line, "mkdir ")) {
-        uint32_t cluster;
-        if (fat32_create_directory(fat32_root_cluster(), command_line + 6,
-                                   &cluster)) {
-            file_list_dirty = 1u;
-            terminal_add_line("DIRECTORY CREATED");
-        } else {
-            terminal_add_line("DIRECTORY CREATE FAILED");
-        }
-    } else if (text_starts_with(command_line, "rm ")) {
-        if (fat32_delete(fat32_root_cluster(), command_line + 3)) {
-            file_list_dirty = 1u;
-            terminal_add_line("ENTRY REMOVED");
-        } else {
-            terminal_add_line("REMOVE FAILED");
-        }
-    } else if (*command_line != '\0') {
-        terminal_add_line("UNKNOWN COMMAND");
-    }
-    terminal_input_length = 0u;
-    terminal_input[0] = '\0';
 }
 
 static int parse_browser_target(const char *text, char host[64],
@@ -434,31 +295,30 @@ static void browser_load_page(void)
     browser_status_color = 10u;
 }
 
-static void draw_terminal(int32_t x, int32_t y)
+static void draw_browser(int32_t x, int32_t y, uint32_t width,
+                         uint32_t height)
 {
-    video_draw_text(x + 5, y + 5, "TEXUGOS TERMINAL", 1u);
-    for (uint32_t row = 0u; row < terminal_line_count; ++row) {
-        video_draw_text(x + 5, y + 17 + (int32_t)row * 11,
-                        terminal_lines[row], 1u);
-    }
-    video_draw_text(x + 5, y + 87, ">", 1u);
-    uint32_t input_start = terminal_input_length > 27u
-        ? terminal_input_length - 27u : 0u;
-    video_draw_text(x + 17, y + 87, terminal_input + input_start, 1u);
-}
-
-static void draw_browser(int32_t x, int32_t y)
-{
-    video_draw_text(x + 5, y + 5, "HTTP BROWSER URL", 1u);
-    video_draw_text(x + 5, y + 16, browser_status, browser_status_color);
+    video_fill_rect(x + 3, y + 3, width - 6u, 11u, 2u);
+    video_fill_rect(x + 6, y + 7, 3u, 3u, browser_status_color);
+    video_draw_text(x + 13, y + 5, "HTTP BROWSER", 15u);
+    video_draw_text(x + 5, y + 17, browser_status, browser_status_color);
     for (uint32_t row = 0u; row < browser_line_count; ++row) {
-        video_draw_text(x + 5, y + 28 + (int32_t)row * 10,
+        video_draw_text(x + 5, y + 30 + (int32_t)row * 10,
                         browser_lines[row], 1u);
     }
-    video_draw_text(x + 5, y + 87, ">", 1u);
-    uint32_t input_start = browser_input_length > 27u
-        ? browser_input_length - 27u : 0u;
-    video_draw_text(x + 17, y + 87, browser_input + input_start, 1u);
+
+    uint32_t field_width = width - 43u;
+    int32_t control_y = y + (int32_t)height - 16;
+    video_fill_rect(x + 4, control_y, field_width, 14u, 2u);
+    video_fill_rect(x + 4, control_y, field_width, 1u, 8u);
+    video_draw_text(x + 7, control_y + 4, ">", 11u);
+    uint32_t visible_characters = (field_width - 15u) / 6u;
+    uint32_t input_start = browser_input_length > visible_characters
+        ? browser_input_length - visible_characters : 0u;
+    video_draw_text(x + 16, control_y + 4,
+                    browser_input + input_start, 15u);
+    video_draw_button(x + (int32_t)width - 36, control_y,
+                      32u, 14u, "GO", 9u, 15u);
 }
 
 static void refresh_file_list(void)
@@ -471,10 +331,51 @@ static void refresh_file_list(void)
     }
 }
 
-static void draw_files(int32_t x, int32_t y, uint32_t height)
+static void files_go_up(void)
+{
+    if (files_directory != fat32_root_cluster()) {
+        struct fat32_entry parent;
+        if (fat32_find(files_directory, "..", &parent)) {
+            files_directory = parent.first_cluster;
+            files_selected = 0u;
+            file_list_dirty = 1u;
+        }
+    }
+}
+
+static void files_go_home(void)
+{
+    files_directory = fat32_root_cluster();
+    files_selected = 0u;
+    file_list_dirty = 1u;
+}
+
+static void files_activate_selected(void)
+{
+    if (file_list_dirty != 0u) {
+        refresh_file_list();
+    }
+    if (!file_list_valid || files_selected >= file_entry_count) {
+        return;
+    }
+    struct fat32_entry *entry = &file_entries[files_selected];
+    if ((entry->attributes & FAT32_ATTRIBUTE_DIRECTORY) != 0u) {
+        files_directory = entry->first_cluster;
+        files_selected = 0u;
+        file_list_dirty = 1u;
+    } else if (fat32_read_file(files_directory, entry->name, files_preview,
+                               FILE_PREVIEW_SIZE, &files_preview_length)) {
+        files_preview[files_preview_length] = '\0';
+        files_preview_open = 1u;
+    }
+}
+
+static void draw_files(int32_t x, int32_t y, uint32_t width,
+                       uint32_t height)
 {
     if (files_preview_open) {
-        video_draw_text(x + 5, y + 5, "FILE PREVIEW", 1u);
+        video_draw_button(x + 4, y + 2, 34u, 13u, "BACK", 2u, 15u);
+        video_draw_text(x + 43, y + 5, "FILE PREVIEW", 1u);
         if (files_preview_length == 0u) {
             video_draw_text(x + 5, y + 18, "EMPTY FILE", 1u);
         } else {
@@ -502,15 +403,16 @@ static void draw_files(int32_t x, int32_t y, uint32_t height)
                 video_draw_text(x + 5, line_y, line, 1u);
             }
         }
-        video_draw_text(x + 5, y + (int32_t)height - 12, "BACKSPACE BACK",
-                        1u);
         return;
     }
 
     if (file_list_dirty != 0u) {
         refresh_file_list();
     }
-    video_draw_text(x + 5, y + 5, "ROOT FILES ENTER OPEN", 1u);
+    video_draw_button(x + 4, y + 2, 24u, 13u, "UP", 2u, 15u);
+    video_draw_button(x + 32, y + 2, 34u, 13u, "OPEN", 9u, 15u);
+    video_draw_button(x + 70, y + 2, 36u, 13u, "HOME", 2u, 15u);
+    video_draw_text(x + 112, y + 5, "FILES", 1u);
     if (!file_list_valid) {
         video_draw_text(x + 5, y + 18, "DIRECTORY LIST FAILED", 4u);
         return;
@@ -520,7 +422,7 @@ static void draw_files(int32_t x, int32_t y, uint32_t height)
         return;
     }
 
-    uint32_t visible = (height - 18u) / 10u;
+    uint32_t visible = height > 18u ? (height - 18u) / 10u : 0u;
     if (visible > file_entry_count) {
         visible = file_entry_count;
     }
@@ -528,7 +430,7 @@ static void draw_files(int32_t x, int32_t y, uint32_t height)
         uint32_t index = row;
         if (index == files_selected) {
             video_fill_rect(x + 3, y + 16 + (int32_t)row * 10,
-                            176u, 10u, 9u);
+                            width - 10u, 10u, 9u);
         }
         video_draw_text(x + 5, y + 18 + (int32_t)row * 10,
                         file_entries[index].name,
@@ -542,16 +444,176 @@ static void draw_files(int32_t x, int32_t y, uint32_t height)
     }
 }
 
-static void draw_settings(int32_t x, int32_t y)
+static void notepad_set_status(const char *text, uint8_t color)
+{
+    text_copy(notepad_status, text, sizeof(notepad_status));
+    notepad_status_color = color;
+}
+
+static void notepad_save(void)
+{
+    if (notepad_name[0] == '\0') {
+        notepad_set_status("ENTER A FILE NAME", 4u);
+        return;
+    }
+
+    struct fat32_entry existing;
+    if (fat32_find(files_directory, notepad_name, &existing)) {
+        notepad_set_status("FILE ALREADY EXISTS", 4u);
+        return;
+    }
+    if (!fat32_write_file(files_directory, notepad_name, notepad_text,
+                          notepad_text_length)) {
+        notepad_set_status("SAVE FAILED", 4u);
+        return;
+    }
+    file_list_dirty = 1u;
+    notepad_set_status("FILE SAVED", 10u);
+}
+
+static void notepad_append(char character)
+{
+    if (notepad_text_length + 1u >= sizeof(notepad_text)) {
+        notepad_set_status("DOCUMENT FULL", 4u);
+        return;
+    }
+    notepad_text[notepad_text_length++] = character;
+    notepad_text[notepad_text_length] = '\0';
+    notepad_set_status("UNSAVED CHANGES", 14u);
+}
+
+static void notepad_handle_key(char key)
+{
+    if (key == '\t') {
+        notepad_name_focused ^= 1u;
+        notepad_set_status(notepad_name_focused ? "TYPE FILE NAME"
+                                                : "UNSAVED CHANGES",
+                           notepad_name_focused ? 11u : 14u);
+        return;
+    }
+    if (notepad_name_focused != 0u) {
+        if (key == '\n') {
+            notepad_name_focused = 0u;
+            notepad_set_status("UNSAVED CHANGES", 14u);
+        } else if (key == '\b') {
+            if (notepad_name[0] != '\0') {
+                notepad_name[--notepad_name_length] = '\0';
+                notepad_set_status("TYPE FILE NAME", 11u);
+            }
+        } else if (key >= ' ' && key <= '~' &&
+                   notepad_name_length + 1u < sizeof(notepad_name)) {
+            notepad_name[notepad_name_length++] = key;
+            notepad_name[notepad_name_length] = '\0';
+            notepad_set_status("PRESS ENTER TO WRITE", 11u);
+        }
+        return;
+    }
+    if (key == '\b') {
+        if (notepad_text_length != 0u) {
+            notepad_text[--notepad_text_length] = '\0';
+            notepad_set_status("UNSAVED CHANGES", 14u);
+        }
+    } else if (key == '\n' || (key >= ' ' && key <= '~')) {
+        notepad_append(key);
+    }
+}
+
+static void draw_notepad(int32_t x, int32_t y, uint32_t width,
+                         uint32_t height)
+{
+    int32_t toolbar_y = y + 3;
+    uint32_t field_width = width - 78u;
+    video_fill_rect(x + 4, toolbar_y, field_width, 14u, 2u);
+    video_fill_rect(x + 4, toolbar_y, field_width, 1u,
+                    notepad_name_focused ? 11u : 8u);
+    video_draw_text(x + 7, toolbar_y + 4, "FILE", 11u);
+    uint32_t visible_name = field_width > 36u
+        ? (field_width - 36u) / 6u : 1u;
+    uint32_t name_start = text_length(notepad_name) > visible_name
+        ? text_length(notepad_name) - visible_name : 0u;
+    video_draw_text(x + 34, toolbar_y + 4,
+                    notepad_name[0] == '\0' ? "NEWFILE.TXT"
+                                            : notepad_name + name_start,
+                    notepad_name[0] == '\0' ? 7u : 15u);
+    video_draw_button(x + (int32_t)width - 36, toolbar_y,
+                      32u, 14u, "SAVE", 9u, 15u);
+
+    int32_t editor_y = y + 22;
+    int32_t footer_y = y + (int32_t)height - 15;
+    uint32_t editor_height = footer_y > editor_y
+        ? (uint32_t)(footer_y - editor_y) : 0u;
+    video_fill_rect(x + 4, editor_y, width - 8u, editor_height, 15u);
+    video_fill_rect(x + 4, editor_y, width - 8u, 1u, 7u);
+
+    uint32_t columns = width > 12u ? (width - 12u) / 6u : 1u;
+    uint32_t visible_rows = editor_height > 4u
+        ? (editor_height - 4u) / 9u : 1u;
+    uint32_t total_rows = 1u;
+    uint32_t column = 0u;
+    for (uint32_t index = 0u; index < notepad_text_length; ++index) {
+        if (notepad_text[index] == '\n' || column == columns) {
+            ++total_rows;
+            column = 0u;
+            if (notepad_text[index] == '\n') {
+                continue;
+            }
+        }
+        ++column;
+    }
+    uint32_t first_row = total_rows > visible_rows
+        ? total_rows - visible_rows : 0u;
+    uint32_t row = 0u;
+    column = 0u;
+    for (uint32_t index = 0u; index < notepad_text_length; ++index) {
+        char character = notepad_text[index];
+        if (character == '\n') {
+            ++row;
+            column = 0u;
+            continue;
+        }
+        if (column == columns) {
+            ++row;
+            column = 0u;
+        }
+        if (character >= ' ' && character <= '~' &&
+            row >= first_row && row < first_row + visible_rows) {
+            char glyph[2] = {character, '\0'};
+            video_draw_text(x + 6 + (int32_t)column * 6,
+                            editor_y + 3 +
+                                (int32_t)(row - first_row) * 9,
+                            glyph, 1u);
+        }
+        ++column;
+    }
+    if (notepad_name_focused == 0u) {
+        uint32_t cursor_row = total_rows - 1u;
+        uint32_t cursor_column = column;
+        if (cursor_row >= first_row &&
+            cursor_row < first_row + visible_rows &&
+            cursor_column < columns) {
+            video_fill_rect(x + 6 + (int32_t)cursor_column * 6,
+                            editor_y + 3 +
+                                (int32_t)(cursor_row - first_row) * 9,
+                            1u, 7u, 9u);
+        }
+    }
+
+    video_fill_rect(x + 4, footer_y, width - 8u, 12u, 2u);
+    video_draw_text(x + 7, footer_y + 3, notepad_status,
+                    notepad_status_color);
+}
+
+static void draw_settings(int32_t x, int32_t y, uint32_t width,
+                          uint32_t height)
 {
     struct mouse_state mouse;
     mouse_get_state(&mouse);
 
-    video_draw_text(x + 5, y + 5, "SYSTEM INFORMATION", 1u);
+    video_draw_text(x + 5, y + 5, "SYSTEM STATUS", 1u);
     video_draw_text(x + 5, y + 18, "DISPLAY 320 X 200", 1u);
     video_draw_text(x + 5, y + 29, "BOOT LEGACY BIOS", 1u);
     video_draw_text(x + 5, y + 40, "FREE FRAMES", 1u);
-    char value[TERMINAL_LINE_SIZE] = "";
+    char value[STATUS_TEXT_SIZE] = "";
     append_u32(value, frame_free_count());
     video_draw_text(x + 88, y + 40, value, 1u);
     video_draw_text(x + 5, y + 51, "PCI DEVICES", 1u);
@@ -566,6 +628,10 @@ static void draw_settings(int32_t x, int32_t y)
     value[0] = '\0';
     append_u32(value, pit_ticks_read());
     video_draw_text(x + 72, y + 73, value, 1u);
+    uint32_t button_width = width > 104u ? 96u : width - 8u;
+    video_draw_button(x + 4, y + (int32_t)height - 16, button_width, 14u,
+                      mouse_speed_fast ? "MOUSE FAST" : "MOUSE NORMAL",
+                      mouse_speed_fast ? 10u : 9u, 15u);
 }
 
 void desktop_apps_initialize(void)
@@ -574,18 +640,20 @@ void desktop_apps_initialize(void)
     files_selected = 0u;
     files_preview_open = 0u;
     files_preview_length = 0u;
+    notepad_name[0] = '\0';
+    notepad_name_length = 0u;
+    notepad_text[0] = '\0';
+    notepad_text_length = 0u;
+    notepad_name_focused = 1u;
+    notepad_set_status("ENTER NAME, THEN TYPE", 11u);
     file_entry_count = 0u;
     file_list_valid = 1u;
     file_list_dirty = 1u;
-    terminal_input_length = 0u;
-    terminal_input[0] = '\0';
-    terminal_clear_lines();
-    terminal_add_line("TEXUGOS TERMINAL READY");
-    terminal_add_line("TYPE HELP FOR COMMANDS");
     arena_initialize();
     browser_input_length = 0u;
     browser_input[0] = '\0';
     browser_line_count = 0u;
+    mouse_speed_fast = 0u;
     text_copy(browser_status, "ENTER HOST:PORT/PATH",
               sizeof(browser_status));
     browser_status_color = 4u;
@@ -598,21 +666,25 @@ void desktop_app_draw(uint32_t index, int32_t x, int32_t y,
         return;
     }
     if (index == 0u) {
-        draw_files(x, y, height);
+        draw_files(x, y, width, height);
     } else if (index == 1u) {
-        draw_terminal(x, y);
+        draw_settings(x, y, width, height);
     } else if (index == 2u) {
-        draw_settings(x, y);
+        draw_browser(x, y, width, height);
     } else if (index == 3u) {
-        draw_browser(x, y);
-    } else {
         arena_draw(x, y, width, height);
+    } else {
+        draw_notepad(x, y, width, height);
     }
 }
 
 void desktop_app_handle_key(uint32_t index, char key)
 {
     if (index == 4u) {
+        notepad_handle_key(key);
+        return;
+    }
+    if (index == 3u) {
         arena_handle_key(key);
         return;
     }
@@ -620,37 +692,16 @@ void desktop_app_handle_key(uint32_t index, char key)
         if (key == '\b') {
             if (files_preview_open) {
                 files_preview_open = 0u;
-            } else if (files_directory != fat32_root_cluster()) {
-                struct fat32_entry parent;
-                if (fat32_find(files_directory, "..", &parent)) {
-                    files_directory = parent.first_cluster;
-                    files_selected = 0u;
-                    file_list_dirty = 1u;
-                }
+            } else {
+                files_go_up();
             }
         } else if (key == '\n' && !files_preview_open) {
-            if (file_list_dirty != 0u) {
-                refresh_file_list();
-            }
-            if (file_list_valid && files_selected < file_entry_count) {
-                struct fat32_entry *entry = &file_entries[files_selected];
-                if ((entry->attributes & FAT32_ATTRIBUTE_DIRECTORY) != 0u) {
-                    files_directory = entry->first_cluster;
-                    files_selected = 0u;
-                    file_list_dirty = 1u;
-                } else if (fat32_read_file(files_directory, entry->name,
-                                           files_preview,
-                                           FILE_PREVIEW_SIZE,
-                                           &files_preview_length)) {
-                    files_preview[files_preview_length] = '\0';
-                    files_preview_open = 1u;
-                }
-            }
+            files_activate_selected();
         }
         return;
     }
 
-    if (index == 3u) {
+    if (index == 2u) {
         if (key == '\n') {
             browser_load_page();
         } else if (key == '\b') {
@@ -664,36 +715,79 @@ void desktop_app_handle_key(uint32_t index, char key)
         }
         return;
     }
-    if (index != 1u) {
-        return;
-    }
-    if (key == '\n') {
-        terminal_execute();
-    } else if (key == '\b') {
-        if (terminal_input_length != 0u) {
-            terminal_input[--terminal_input_length] = '\0';
-        }
-    } else if (key >= ' ' && key <= '~' &&
-               terminal_input_length + 1u < TERMINAL_INPUT_SIZE) {
-        terminal_input[terminal_input_length++] = key;
-        terminal_input[terminal_input_length] = '\0';
-    }
 }
 
 void desktop_app_handle_mouse(uint32_t index, int32_t delta_x)
 {
-    if (index == 4u) {
+    if (index == 3u) {
         arena_handle_mouse(delta_x);
     }
 }
 
-void desktop_app_handle_click(uint32_t index, int32_t x, int32_t y)
+void desktop_app_handle_click(uint32_t index, int32_t x, int32_t y,
+                              uint32_t window_width,
+                              uint32_t window_height)
 {
-    if (index == 4u) {
+    if (index == 3u) {
         arena_fire();
         return;
     }
-    if (index != 0u || files_preview_open || x < 0 || y < 22) {
+    if (index == 4u) {
+        if (y >= 20 && y < 34) {
+            if (x >= (int32_t)window_width - 39 &&
+                x < (int32_t)window_width - 7) {
+                notepad_save();
+            } else if (x >= 7 &&
+                       x < (int32_t)window_width - 77) {
+                notepad_name_focused = 1u;
+                notepad_set_status("TYPE FILE NAME", 11u);
+            }
+        } else if (y >= 39 &&
+                   y < (int32_t)window_height - 18) {
+            notepad_name_focused = 0u;
+            notepad_set_status("UNSAVED CHANGES", 14u);
+        }
+        return;
+    }
+    uint32_t body_width = window_width - 6u;
+    if (index == 1u) {
+        uint32_t button_width = body_width > 104u ? 96u : body_width - 8u;
+        if (x >= 7 && x < 7 + (int32_t)button_width &&
+            y >= (int32_t)window_height - 19 &&
+            y < (int32_t)window_height - 5) {
+            mouse_speed_fast ^= 1u;
+        }
+        return;
+    }
+    if (index == 2u) {
+        int32_t go_x = (int32_t)body_width - 33;
+        if (x >= go_x && x < go_x + 32 &&
+            y >= (int32_t)window_height - 19 &&
+            y < (int32_t)window_height - 5) {
+            browser_load_page();
+        }
+        return;
+    }
+    if (index != 0u || x < 0) {
+        return;
+    }
+    if (files_preview_open) {
+        if (x >= 7 && x < 41 && y >= 19 && y < 32) {
+            files_preview_open = 0u;
+        }
+        return;
+    }
+    if (y >= 19 && y < 32) {
+        if (x >= 7 && x < 31) {
+            files_go_up();
+        } else if (x >= 35 && x < 69) {
+            files_activate_selected();
+        } else if (x >= 73 && x < 109) {
+            files_go_home();
+        }
+        return;
+    }
+    if (y < 35) {
         return;
     }
     if (file_list_dirty != 0u) {
@@ -702,8 +796,13 @@ void desktop_app_handle_click(uint32_t index, int32_t x, int32_t y)
     if (!file_list_valid) {
         return;
     }
-    uint32_t selected = (uint32_t)(y - 22) / 10u;
+    uint32_t selected = (uint32_t)(y - 35) / 10u;
     if (selected < file_entry_count) {
         files_selected = selected;
     }
+}
+
+uint32_t desktop_app_mouse_sensitivity(void)
+{
+    return mouse_speed_fast ? 2u : 1u;
 }

@@ -34,6 +34,8 @@ struct fat32_volume {
     uint32_t backup_sector;
     uint32_t free_cluster_hint;
     uint32_t next_cluster_hint;
+    uint8_t fsinfo_valid;
+    uint8_t backup_fsinfo_valid;
 };
 
 struct directory_location {
@@ -235,6 +237,57 @@ static int fat_read(uint32_t cluster, uint32_t *value)
     return 1;
 }
 
+static int next_cluster(uint32_t cluster, uint32_t *next, int *at_end)
+{
+    if (next == 0 || at_end == 0 || !fat_read(cluster, next)) {
+        return 0;
+    }
+    if (*next >= FAT32_END_OF_CHAIN) {
+        *at_end = 1;
+        return 1;
+    }
+    if (!is_valid_cluster(*next)) {
+        return 0;
+    }
+    *at_end = 0;
+    return 1;
+}
+
+static int valid_cluster_chain(uint32_t first_cluster)
+{
+    uint32_t slow = first_cluster;
+    uint32_t fast = first_cluster;
+    if (!is_valid_cluster(first_cluster)) {
+        return 0;
+    }
+
+    for (uint32_t count = 0u; count < volume.cluster_count; ++count) {
+        uint32_t next;
+        int at_end;
+        if (!next_cluster(slow, &next, &at_end)) {
+            return 0;
+        }
+        if (at_end) {
+            return 1;
+        }
+        slow = next;
+
+        for (uint32_t step = 0u; step < 2u; ++step) {
+            if (!next_cluster(fast, &next, &at_end)) {
+                return 0;
+            }
+            if (at_end) {
+                return 1;
+            }
+            fast = next;
+        }
+        if (slow == fast) {
+            return 0;
+        }
+    }
+    return 0;
+}
+
 static int fat_write(uint32_t cluster, uint32_t value)
 {
     if (!is_valid_cluster(cluster)) {
@@ -261,8 +314,7 @@ static int fat_write(uint32_t cluster, uint32_t value)
 
 static int update_fsinfo(void)
 {
-    if (volume.fsinfo_sector == 0u ||
-        volume.fsinfo_sector >= volume.reserved_sectors) {
+    if (volume.fsinfo_valid == 0u) {
         return 1;
     }
 
@@ -270,12 +322,7 @@ static int update_fsinfo(void)
         volume.start_sector + volume.fsinfo_sector,
         volume.start_sector + volume.backup_sector + volume.fsinfo_sector,
     };
-    uint32_t copies = volume.backup_sector != 0u &&
-                              volume.backup_sector != 0xffffu &&
-                              volume.backup_sector + volume.fsinfo_sector <
-                                  volume.reserved_sectors
-                          ? 2u
-                          : 1u;
+    uint32_t copies = volume.backup_fsinfo_valid != 0u ? 2u : 1u;
     for (uint32_t index = 0; index < copies; ++index) {
         if (!ata_read_sector(sectors[index], sector_buffer)) {
             return 0;
@@ -314,19 +361,29 @@ static int allocate_cluster(uint32_t *allocated)
             continue;
         }
         if (!fat_write(cluster, FAT32_END_MARKER)) {
+            if (!fat_write(cluster, 0u)) {
+                mounted = 0;
+            }
             return 0;
         }
 
-        if (volume.free_cluster_hint != FAT32_UNKNOWN &&
-            volume.free_cluster_hint != 0u) {
-            --volume.free_cluster_hint;
+        uint32_t previous_free_hint = volume.free_cluster_hint;
+        uint32_t previous_next_hint = volume.next_cluster_hint;
+        if (volume.free_cluster_hint != FAT32_UNKNOWN) {
+            volume.free_cluster_hint = volume.free_cluster_hint != 0u
+                ? volume.free_cluster_hint - 1u : FAT32_UNKNOWN;
         }
         volume.next_cluster_hint =
             cluster + 1u < volume.cluster_count + 2u ? cluster + 1u : 2u;
         if (!update_fsinfo()) {
-            fat_write(cluster, 0u);
-            if (volume.free_cluster_hint != FAT32_UNKNOWN) {
-                ++volume.free_cluster_hint;
+            int rollback_succeeded = fat_write(cluster, 0u);
+            volume.free_cluster_hint = previous_free_hint;
+            volume.next_cluster_hint = previous_next_hint;
+            if (rollback_succeeded && !update_fsinfo()) {
+                rollback_succeeded = 0;
+            }
+            if (!rollback_succeeded) {
+                mounted = 0;
             }
             return 0;
         }
@@ -339,22 +396,44 @@ static int allocate_cluster(uint32_t *allocated)
 static int release_chain(uint32_t first_cluster)
 {
     uint32_t cluster = first_cluster;
-    for (uint32_t count = 0; count < volume.cluster_count; ++count) {
+    uint32_t chain_length = 0u;
+    int at_end = 0;
+    while (chain_length < volume.cluster_count) {
         uint32_t next;
-        if (!is_valid_cluster(cluster) || !fat_read(cluster, &next) ||
+        if (!next_cluster(cluster, &next, &at_end)) {
+            return 0;
+        }
+        ++chain_length;
+        if (at_end) {
+            break;
+        }
+        cluster = next;
+    }
+    if (at_end == 0) {
+        return 0;
+    }
+
+    cluster = first_cluster;
+    for (uint32_t count = 0u; count < chain_length; ++count) {
+        uint32_t next;
+        if (!next_cluster(cluster, &next, &at_end) ||
             !fat_write(cluster, 0u)) {
             return 0;
         }
         if (volume.free_cluster_hint != FAT32_UNKNOWN) {
-            ++volume.free_cluster_hint;
+            if (volume.free_cluster_hint < volume.cluster_count) {
+                ++volume.free_cluster_hint;
+            } else {
+                volume.free_cluster_hint = FAT32_UNKNOWN;
+            }
         }
-        if (next >= FAT32_END_OF_CHAIN) {
+        if (at_end) {
             volume.next_cluster_hint = cluster;
-            return update_fsinfo();
+            break;
         }
         cluster = next;
     }
-    return 0;
+    return update_fsinfo();
 }
 
 struct lfn_state {
@@ -395,7 +474,7 @@ static void decode_lfn_slot(struct lfn_state *state,
     };
     uint8_t order = raw[0] & 0x1fu;
     int last = (raw[0] & 0x40u) != 0u;
-    if (raw[11] != 0x0fu || raw[12] != 0u ||
+    if ((raw[0] & 0xa0u) != 0u || raw[11] != 0x0fu || raw[12] != 0u ||
         read_u16(&raw[26]) != 0u || order == 0u ||
         order > FAT32_LFN_MAX_ENTRIES) {
         reset_lfn_state(state);
@@ -495,6 +574,9 @@ static int find_entry(uint32_t directory, const char *name,
     struct lfn_state lfn = {0};
     uint32_t cluster = directory;
     for (uint32_t chain = 0; chain < volume.cluster_count; ++chain) {
+        if (!is_valid_cluster(cluster)) {
+            return -1;
+        }
         uint32_t first_sector = cluster_sector(cluster);
         for (uint32_t sector_index = 0;
              sector_index < volume.sectors_per_cluster; ++sector_index) {
@@ -552,10 +634,11 @@ static int find_entry(uint32_t directory, const char *name,
         }
 
         uint32_t next;
-        if (!fat_read(cluster, &next)) {
+        int at_end;
+        if (!next_cluster(cluster, &next, &at_end)) {
             return -1;
         }
-        if (next >= FAT32_END_OF_CHAIN) {
+        if (at_end) {
             return 0;
         }
         cluster = next;
@@ -570,47 +653,61 @@ static int find_free_slots(uint32_t directory, uint32_t needed,
         needed > FAT32_LFN_MAX_ENTRIES + 1u || slots == 0) {
         return 0;
     }
+    if (!valid_cluster_chain(directory)) {
+        return 0;
+    }
 
     uint32_t found = 0u;
     int end_reached = 0;
+    int cluster_scanned = 0;
     uint32_t cluster = directory;
     for (uint32_t chain = 0; chain < volume.cluster_count; ++chain) {
-        uint32_t first_sector = cluster_sector(cluster);
-        for (uint32_t sector_index = 0;
-             sector_index < volume.sectors_per_cluster; ++sector_index) {
-            uint32_t lba = first_sector + sector_index;
-            if (!ata_read_sector(lba, sector_buffer)) {
-                return 0;
-            }
-            for (uint32_t index = 0; index < ENTRIES_PER_SECTOR; ++index) {
-                uint32_t offset = index * DIRECTORY_ENTRY_SIZE;
-                uint8_t first = sector_buffer[offset];
-                if (first == 0u) {
-                    end_reached = 1;
-                }
-                if (end_reached || first == 0xe5u) {
-                    slots[found].sector = lba;
-                    slots[found].offset = (uint16_t)offset;
-                    if (++found == needed) {
-                        return 1;
-                    }
-                } else {
-                    found = 0u;
-                }
-            }
-        }
-
-        uint32_t next;
-        if (!fat_read(cluster, &next)) {
+        if (!is_valid_cluster(cluster)) {
             return 0;
         }
-        if (next >= FAT32_END_OF_CHAIN) {
+        if (cluster_scanned == 0) {
+            uint32_t first_sector = cluster_sector(cluster);
+            for (uint32_t sector_index = 0;
+                 sector_index < volume.sectors_per_cluster; ++sector_index) {
+                uint32_t lba = first_sector + sector_index;
+                if (!ata_read_sector(lba, sector_buffer)) {
+                    return 0;
+                }
+                for (uint32_t index = 0; index < ENTRIES_PER_SECTOR; ++index) {
+                    uint32_t offset = index * DIRECTORY_ENTRY_SIZE;
+                    uint8_t first = sector_buffer[offset];
+                    if (first == 0u) {
+                        end_reached = 1;
+                    }
+                    if (end_reached || first == 0xe5u) {
+                        slots[found].sector = lba;
+                        slots[found].offset = (uint16_t)offset;
+                        if (++found == needed) {
+                            return 1;
+                        }
+                    } else {
+                        found = 0u;
+                    }
+                }
+            }
+        }
+        cluster_scanned = 0;
+
+        uint32_t next;
+        int at_end;
+        if (!next_cluster(cluster, &next, &at_end)) {
+            return 0;
+        }
+        if (at_end) {
             uint32_t extended;
             if (!allocate_cluster(&extended)) {
                 return 0;
             }
             if (!fat_write(cluster, extended)) {
-                release_chain(extended);
+                if (!fat_write(cluster, FAT32_END_MARKER) ||
+                    !release_chain(extended)) {
+                    mounted = 0;
+                }
                 return 0;
             }
             uint8_t empty_sector[SECTOR_SIZE];
@@ -618,8 +715,10 @@ static int find_free_slots(uint32_t directory, uint32_t needed,
             for (uint32_t index = 0; index < volume.sectors_per_cluster; ++index) {
                 if (!ata_write_sector(cluster_sector(extended) + index,
                                       empty_sector)) {
-                    fat_write(cluster, FAT32_END_MARKER);
-                    release_chain(extended);
+                    if (!fat_write(cluster, FAT32_END_MARKER) ||
+                        !release_chain(extended)) {
+                        mounted = 0;
+                    }
                     return 0;
                 }
             }
@@ -627,14 +726,21 @@ static int find_free_slots(uint32_t directory, uint32_t needed,
             for (uint32_t sector_index = 0u;
                  sector_index < volume.sectors_per_cluster; ++sector_index) {
                 for (uint32_t index = 0u; index < ENTRIES_PER_SECTOR; ++index) {
+                    if (found == needed) {
+                        return 1;
+                    }
                     slots[found].sector = first_sector + sector_index;
                     slots[found].offset =
                         (uint16_t)(index * DIRECTORY_ENTRY_SIZE);
-                    if (++found == needed) {
-                        return 1;
-                    }
+                    ++found;
                 }
             }
+            if (found == needed) {
+                return 1;
+            }
+            cluster = extended;
+            cluster_scanned = 1;
+            continue;
         }
         cluster = next;
     }
@@ -651,18 +757,39 @@ static int write_directory_entries(uint32_t directory,
         return 0;
     }
 
+    uint32_t attempted = 0u;
     for (uint32_t index = 0u; index < count; ++index) {
         if (!ata_read_sector(slots[index].sector, sector_buffer)) {
-            return 0;
+            break;
         }
         copy_bytes(&sector_buffer[slots[index].offset],
                    &raw_entries[index * DIRECTORY_ENTRY_SIZE],
                    DIRECTORY_ENTRY_SIZE);
+        attempted = index + 1u;
         if (!ata_write_sector(slots[index].sector, sector_buffer)) {
-            return 0;
+            break;
         }
     }
-    return 1;
+    if (attempted == count) {
+        return 1;
+    }
+
+    int rollback_failed = 0;
+    while (attempted != 0u) {
+        --attempted;
+        if (!ata_read_sector(slots[attempted].sector, sector_buffer)) {
+            rollback_failed = 1;
+            continue;
+        }
+        sector_buffer[slots[attempted].offset] = 0xe5u;
+        if (!ata_write_sector(slots[attempted].sector, sector_buffer)) {
+            rollback_failed = 1;
+        }
+    }
+    if (rollback_failed) {
+        mounted = 0;
+    }
+    return 0;
 }
 
 static int write_directory_entry(uint32_t directory,
@@ -878,7 +1005,8 @@ static int write_file_data(uint32_t first_cluster, const uint8_t *contents,
 
         if (current + 1u < cluster_count) {
             uint32_t next;
-            if (!fat_read(cluster, &next) || next >= FAT32_END_OF_CHAIN) {
+            int at_end;
+            if (!next_cluster(cluster, &next, &at_end) || at_end) {
                 return 0;
             }
             cluster = next;
@@ -892,6 +1020,8 @@ int fat32_mount(void)
     uint8_t master_boot_record[SECTOR_SIZE];
     uint32_t partition_start = 0;
     uint32_t partition_size = 0;
+    mounted = 0;
+    volume = (struct fat32_volume){0};
     if (!ata_read_sector(0u, master_boot_record) ||
         master_boot_record[510] != 0x55u ||
         master_boot_record[511] != 0xaau) {
@@ -907,7 +1037,10 @@ int fat32_mount(void)
             break;
         }
     }
+    uint32_t disk_sectors = ata_sector_count();
     if (partition_start == 0u || partition_size == 0u ||
+        partition_start >= disk_sectors ||
+        partition_size > disk_sectors - partition_start ||
         !ata_read_sector(partition_start, sector_buffer) ||
         sector_buffer[510] != 0x55u || sector_buffer[511] != 0xaau) {
         return 0;
@@ -931,19 +1064,20 @@ int fat32_mount(void)
         (sectors_per_cluster & (sectors_per_cluster - 1u)) != 0u ||
         reserved_sectors == 0u || fat_count == 0u || fat_count > 2u ||
         fat_sectors == 0u || total_sectors == 0u ||
-        total_sectors > partition_size ||
-        reserved_sectors + fat_count * fat_sectors >= total_sectors) {
+        total_sectors > partition_size || reserved_sectors >= total_sectors ||
+        fat_sectors > (total_sectors - reserved_sectors) / fat_count) {
         return 0;
     }
 
+    uint32_t fat_area_sectors = fat_count * fat_sectors;
     volume.start_sector = partition_start;
     volume.sector_count = total_sectors;
     volume.fat_start = partition_start + reserved_sectors;
     volume.fat_sectors = fat_sectors;
     volume.data_start = partition_start + reserved_sectors +
-                        fat_count * fat_sectors;
+                        fat_area_sectors;
     volume.cluster_count =
-        (total_sectors - reserved_sectors - fat_count * fat_sectors) /
+        (total_sectors - reserved_sectors - fat_area_sectors) /
         sectors_per_cluster;
     volume.root_cluster = root_cluster;
     volume.sectors_per_cluster = sectors_per_cluster;
@@ -954,17 +1088,23 @@ int fat32_mount(void)
     volume.free_cluster_hint = FAT32_UNKNOWN;
     volume.next_cluster_hint = 2u;
 
-    if (volume.cluster_count < 65525u || !is_valid_cluster(root_cluster)) {
+    if (volume.cluster_count < 65525u ||
+        volume.cluster_count > 0x0fffffeeu ||
+        !is_valid_cluster(root_cluster)) {
         return 0;
     }
-    if ((volume.cluster_count + 2u) * sizeof(uint32_t) >
-        fat_sectors * SECTOR_SIZE) {
+    uint32_t fat_entries = volume.cluster_count + 2u;
+    uint32_t required_fat_sectors =
+        fat_entries / (SECTOR_SIZE / sizeof(uint32_t)) +
+        (fat_entries % (SECTOR_SIZE / sizeof(uint32_t)) != 0u);
+    if (required_fat_sectors > fat_sectors) {
         return 0;
     }
     if (fsinfo_sector != 0u && fsinfo_sector < reserved_sectors &&
         ata_read_sector(partition_start + fsinfo_sector, sector_buffer) &&
         read_u32(&sector_buffer[0]) == 0x41615252u &&
         read_u32(&sector_buffer[484]) == 0x61417272u) {
+        volume.fsinfo_valid = 1u;
         uint32_t free_count = read_u32(&sector_buffer[488]);
         uint32_t next_cluster = read_u32(&sector_buffer[492]);
         if (free_count <= volume.cluster_count) {
@@ -972,6 +1112,14 @@ int fat32_mount(void)
         }
         if (is_valid_cluster(next_cluster)) {
             volume.next_cluster_hint = next_cluster;
+        }
+        if (backup_sector != 0u && backup_sector != 0xffffu &&
+            backup_sector + fsinfo_sector < reserved_sectors &&
+            ata_read_sector(partition_start + backup_sector + fsinfo_sector,
+                            sector_buffer) &&
+            read_u32(&sector_buffer[0]) == 0x41615252u &&
+            read_u32(&sector_buffer[484]) == 0x61417272u) {
+            volume.backup_fsinfo_valid = 1u;
         }
     }
 
@@ -1005,6 +1153,9 @@ int fat32_list(uint32_t directory, struct fat32_entry *entries,
     struct lfn_state lfn = {0};
     uint32_t cluster = directory;
     for (uint32_t chain = 0; chain < volume.cluster_count; ++chain) {
+        if (!is_valid_cluster(cluster)) {
+            return 0;
+        }
         uint32_t first_sector = cluster_sector(cluster);
         for (uint32_t sector_index = 0;
              sector_index < volume.sectors_per_cluster; ++sector_index) {
@@ -1042,10 +1193,11 @@ int fat32_list(uint32_t directory, struct fat32_entry *entries,
         }
 
         uint32_t next;
-        if (!fat_read(cluster, &next)) {
+        int at_end;
+        if (!next_cluster(cluster, &next, &at_end)) {
             return 0;
         }
-        if (next >= FAT32_END_OF_CHAIN) {
+        if (at_end) {
             return 1;
         }
         cluster = next;
@@ -1091,7 +1243,8 @@ int fat32_read_file(uint32_t directory, const char *name, void *buffer,
         }
         if (current + 1u < cluster_count) {
             uint32_t next;
-            if (!fat_read(cluster, &next) || next >= FAT32_END_OF_CHAIN) {
+            int at_end;
+            if (!next_cluster(cluster, &next, &at_end) || at_end) {
                 return 0;
             }
             cluster = next;
@@ -1131,8 +1284,15 @@ int fat32_write_file(uint32_t directory, const char *name, const void *buffer,
         if (first_cluster == 0u) {
             first_cluster = cluster;
         } else if (!fat_write(previous, cluster)) {
-            fat_write(cluster, 0u);
-            release_chain(first_cluster);
+            int rollback_succeeded = fat_write(previous,
+                                               FAT32_END_MARKER);
+            if (rollback_succeeded) {
+                rollback_succeeded = release_chain(first_cluster) &&
+                                     release_chain(cluster);
+            }
+            if (!rollback_succeeded) {
+                mounted = 0;
+            }
             return 0;
         }
         previous = cluster;
@@ -1140,8 +1300,8 @@ int fat32_write_file(uint32_t directory, const char *name, const void *buffer,
 
     if (size != 0u &&
         !write_file_data(first_cluster, (const uint8_t *)buffer, size)) {
-        if (first_cluster != 0u) {
-            release_chain(first_cluster);
+        if (first_cluster != 0u && !release_chain(first_cluster)) {
+            mounted = 0;
         }
         return 0;
     }
@@ -1150,8 +1310,8 @@ int fat32_write_file(uint32_t directory, const char *name, const void *buffer,
     encode_entry(raw, short_name, 0x20u, first_cluster, size);
     if (!write_named_directory_entry(directory, name, name_length, needs_lfn,
                                      short_name, raw)) {
-        if (first_cluster != 0u) {
-            release_chain(first_cluster);
+        if (first_cluster != 0u && !release_chain(first_cluster)) {
+            mounted = 0;
         }
         return 0;
     }
@@ -1180,7 +1340,9 @@ int fat32_create_directory(uint32_t parent, const char *name,
     fill_bytes(empty_sector, 0u, SECTOR_SIZE);
     for (uint32_t index = 0; index < volume.sectors_per_cluster; ++index) {
         if (!ata_write_sector(cluster_sector(cluster) + index, empty_sector)) {
-            release_chain(cluster);
+            if (!release_chain(cluster)) {
+                mounted = 0;
+            }
             return 0;
         }
     }
@@ -1200,7 +1362,9 @@ int fat32_create_directory(uint32_t parent, const char *name,
     copy_bytes(&empty_sector[DIRECTORY_ENTRY_SIZE], dot_dot,
                sizeof(dot_dot));
     if (!ata_write_sector(cluster_sector(cluster), empty_sector)) {
-        release_chain(cluster);
+        if (!release_chain(cluster)) {
+            mounted = 0;
+        }
         return 0;
     }
 
@@ -1208,7 +1372,9 @@ int fat32_create_directory(uint32_t parent, const char *name,
     encode_entry(raw, short_name, FAT32_ATTRIBUTE_DIRECTORY, cluster, 0u);
     if (!write_named_directory_entry(parent, name, name_length, needs_lfn,
                                      short_name, raw)) {
-        release_chain(cluster);
+        if (!release_chain(cluster)) {
+            mounted = 0;
+        }
         return 0;
     }
     *directory_cluster = cluster;
@@ -1264,6 +1430,7 @@ int fat32_delete(uint32_t directory, const char *name)
         return 0;
     }
     if (entry.first_cluster >= 2u && !release_chain(entry.first_cluster)) {
+        mounted = 0;
         return 0;
     }
     return 1;
